@@ -138,12 +138,78 @@ const hook = (event, input) => {
   ok('mcp stdio server: initialize, tools/list, tools/call');
 
   // ---- adapters write idempotent config for other agents
-  const fakeHome = path.join(tmp, 'ahome');
+  const fakeHome = path.join(tmp, 'ahome'), proj = path.join(tmp, 'aproj');
   const adapters = require('../engine/adapters');
-  assert(adapters.adapt('codex', { home: fakeHome }).changed && !adapters.adapt('codex', { home: fakeHome }).changed);
-  assert(adapters.adapt('gemini', { home: fakeHome }).changed);
-  assert(JSON.parse(fs.readFileSync(path.join(fakeHome, '.gemini', 'settings.json'), 'utf8')).hooks.BeforeAgent.length === 1);
-  ok('adapters: codex + gemini hooks written idempotently');
+  const A = (a, o = {}) => adapters.adapt(a, { home: fakeHome, cwd: proj, ...o });
+  assert(A('codex').changed && !A('codex').changed);
+  assert(/mcp_servers\.laya/.test(fs.readFileSync(path.join(fakeHome, '.codex', 'config.toml'), 'utf8')));
+  assert(A('gemini').changed);
+  const gset = JSON.parse(fs.readFileSync(path.join(fakeHome, '.gemini', 'settings.json'), 'utf8'));
+  assert(gset.hooks.BeforeAgent.length === 1 && gset.mcpServers.laya.args[0] === 'mcp');
+  assert(!A('gemini').changed && JSON.parse(fs.readFileSync(path.join(fakeHome, '.gemini', 'settings.json'), 'utf8')).hooks.BeforeAgent.length === 1);
+  ok('adapters: codex + gemini hooks and MCP written idempotently');
+
+  // hermes (yaml), pi (extension), cursor / windsurf / opencode / copilot (mcp + rules)
+  assert(A('hermes').changed && !A('hermes').changed);
+  const hy = fs.readFileSync(path.join(fakeHome, '.hermes', 'config.yaml'), 'utf8');
+  assert(/pre_llm_call:/.test(hy) && /--agent hermes/.test(hy) && /mcp_servers:/.test(hy));
+  fs.writeFileSync(path.join(fakeHome, '.hermes', 'config.yaml'), 'hooks:\n  on_x: []\n'); // user already has a hooks: key -> never merge blindly
+  const hm = A('hermes');
+  assert(/pre_llm_call/.test(hm.manual) && /^hooks:\n  on_x/.test(fs.readFileSync(path.join(fakeHome, '.hermes', 'config.yaml'), 'utf8')));
+  assert(A('pi').changed && !A('pi').changed && /before_agent_start/.test(fs.readFileSync(path.join(fakeHome, '.pi', 'agent', 'extensions', 'laya.ts'), 'utf8')));
+  w(path.join(fakeHome, '.pi', 'agent', 'extensions', 'laya.ts'), '// mine\n');
+  assert(!A('pi').changed && A('pi').manual && fs.readFileSync(path.join(fakeHome, '.pi', 'agent', 'extensions', 'laya.ts'), 'utf8') === '// mine\n');
+  assert(A('cursor').changed && !A('cursor').changed);
+  assert(JSON.parse(fs.readFileSync(path.join(fakeHome, '.cursor', 'hooks.json'), 'utf8')).hooks.sessionStart.length === 1);
+  assert(/alwaysApply: true/.test(fs.readFileSync(path.join(proj, '.cursor', 'rules', 'laya.mdc'), 'utf8')));
+  assert(A('windsurf').changed && A('opencode').changed && A('copilot').changed);
+  assert(JSON.parse(fs.readFileSync(path.join(fakeHome, '.config', 'opencode', 'opencode.json'), 'utf8')).mcp.laya.type === 'local');
+  assert(JSON.parse(fs.readFileSync(path.join(proj, '.vscode', 'mcp.json'), 'utf8')).servers.laya.type === 'stdio');
+  w(path.join(fakeHome, '.config', 'opencode', 'opencode.json'), '{ // comment\n "model": "x" }');
+  const oc = A('opencode');
+  assert(oc.manual && /not plain JSON/.test(oc.manual) && /^\{ \/\/ comment/.test(fs.readFileSync(path.join(fakeHome, '.config', 'opencode', 'opencode.json'), 'utf8')), 'unparseable config is left alone');
+  assert(A('hermes-agent').agent === 'hermes' && A('pi-agent').agent === 'pi' && A('vscode').agent === 'copilot');
+  assert.throws(() => A('nonsense'), /unknown agent/);
+  assert(adapters.adapt('list', { home: fakeHome }).list.find((x) => x.agent === 'hermes').detected);
+  assert(adapters.adapt('all', { home: fakeHome }).all.length >= 6);
+  assert(/laya_decide/.test(adapters.format(A('mcp'))));
+  ok('adapters: hermes, pi, cursor, windsurf, opencode, copilot, aliases, list/all; never clobbers unparseable configs');
+
+  // other agents get the same brain, shaped for them: no Claude model routing, no Skill tool, native output formats
+  const hm2 = (agent, event, input) => { const r = spawnSync('node', [BIN, 'hook', event, '--agent', agent], { input: JSON.stringify(input), encoding: 'utf8', env: process.env }); assert.strictEqual(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  w(path.join(process.env.CLAUDE_CONFIG_DIR, 'skills', 'pdf', 'SKILL.md'), '---\nname: pdf\ndescription: extract tables from pdf files\n---\nUse pdfplumber for tables.');
+  const pr = 'extract the tables from this pdf using the pdf skill, then summarise them';
+  const her = hm2('hermes', 'prompt', { user_message: pr, session_id: 'her1', cwd });
+  assert(Object.keys(her).join() === 'context' && /pdfplumber/.test(her.context) && !/model plan|Skill tool|Agent tool/.test(her.context), 'hermes gets {context} with the skill inlined and nothing Claude-only');
+  const cod = hm2('codex', 'prompt', { prompt: pr + ' please', session_id: 'cod1', cwd });
+  assert(/pdfplumber/.test(cod.hookSpecificOutput.additionalContext) && !/model plan/.test(cod.hookSpecificOutput.additionalContext) && !/\bmodel +/.test(cod.systemMessage), 'codex: same protocol, no Claude model advice');
+  const cur = hm2('cursor', 'session-start', { session_id: 'cur1', cwd });
+  assert(typeof cur.additional_context === 'string' && !cur.hookSpecificOutput);
+  assert.deepStrictEqual(hm2('cursor', 'prompt', { prompt: pr, session_id: 'cur1', cwd }), {});
+  state.set({ exclusive: 'hard' });
+  const hd = await decide({ prompt: pr + ' now', cwd, sessionId: 'her2', agent: 'hermes' });
+  assert(hd.loadout.exclusive === 'soft' && hd.model === null, 'hard mode and model routing are Claude-only');
+  state.set({ exclusive: 'soft' });
+  ok('hooks speak each agent\'s protocol (hermes context, cursor additional_context, codex hookSpecificOutput)');
+
+  // ChatGPT: remote MCP over HTTP behind a secret
+  const mcpm = require('../engine/mcp');
+  const srv = await mcpm.serveHttp({ port: 0 });
+  const post = (p, body, headers = {}) => new Promise((res, rej) => {
+    const rq = require('http').request({ host: '127.0.0.1', port: srv.address().port, path: p, method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (r) => { let d = ''; r.on('data', (c) => (d += c)); r.on('end', () => res({ code: r.statusCode, body: d })); });
+    rq.on('error', rej); rq.end(JSON.stringify(body));
+  });
+  const tk = mcpm.token();
+  assert.strictEqual((await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).code, 404, 'no token, no answer');
+  assert.strictEqual((await post('/mcp/wrong', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).code, 404);
+  const tl = await post(`/mcp/${tk}`, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  assert(tl.code === 200 && JSON.parse(tl.body).result.tools.length === 4);
+  const bl = await post('/mcp', [{ jsonrpc: '2.0', id: 1, method: 'ping' }, { jsonrpc: '2.0', method: 'notifications/initialized' }], { authorization: `Bearer ${tk}` });
+  assert(bl.code === 200 && JSON.parse(bl.body).length === 1);
+  assert.strictEqual((await post(`/mcp/${tk}`, { jsonrpc: '2.0', method: 'notifications/initialized' })).code, 202);
+  srv.close();
+  assert(/mcp\/[0-9a-f]{48}/.test(A('chatgpt').notes.join('\n')));
+  ok('chatgpt: HTTP MCP endpoint needs the secret (path or bearer), batches + notifications work');
 
   // ---- installer: policy + vet
   const installer = require('../engine/installer');

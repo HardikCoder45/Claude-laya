@@ -2,6 +2,8 @@
 // What the user sees (systemMessage / confirm preview) vs what the model gets (additionalContext).
 const state = require('./state');
 const loadout = require('./loadout');
+const agents = require('./agents');
+const { P } = require('./util');
 const names = (arr) => arr.map((p) => p.name).join(', ');
 const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
@@ -32,7 +34,7 @@ function plan(d, st) {
   if (p.mcp.length) rows.push(['mcp', names(p.mcp)]);
   if (p.plugins.length) rows.push(['plugins', names(p.plugins)]);
   const lo = d.loadout;
-  if (lo && p.skills.length && lo.exclusive !== 'off') rows.push(['rule', lo.exclusive === 'hard' ? 'Claude may use ONLY these skills — other Skill calls are blocked' : 'Claude is told to use ONLY these skills']);
+  if (lo && p.skills.length && lo.exclusive !== 'off') rows.push(['rule', lo.exclusive === 'hard' ? 'Claude may use ONLY these skills — other Skill calls are blocked' : `${agents.native(d.agent) ? 'Claude' : 'the agent'} is told to use ONLY these skills`]);
   if (d.install_queue.length) rows.push(['install', `＋ ${d.install_queue.map((q) => q.id.replace(/^plugin:/, '')).join(', ')} → /laya:install`]);
   else if (d.task.needs_install) rows.push(['install', '＋ want new tools? → /laya:install <task>']);
   if (d.avoid.length) rows.push(['avoid', `⚠ ${d.avoid.map((a) => a.id).join(', ')}`]);
@@ -75,14 +77,15 @@ function context(d, st = state.get(), items = null) {
     if (r.directive) L.push(r.directive);
     blocks = r.blocks;
   }
-  if (p.agents.length) L.push(`use agents (Agent tool subagent_type): ${p.agents.map((s) => s.name).join(', ')}`);
+  const nat = agents.native(d.agent);
+  if (p.agents.length) L.push(nat ? `use agents (Agent tool subagent_type): ${p.agents.map((s) => s.name).join(', ')}` : `useful specialist roles for this task: ${p.agents.map((s) => s.name).join(', ')}`);
   if (p.mcp.length) L.push(`use MCP servers: ${p.mcp.map((s) => s.name).join(', ')}`);
   if (p.plugins.length) L.push(`relevant plugins: ${p.plugins.map((s) => s.name).join(', ')}`);
   if (d.swarm.use) L.push(`task is large: consider a ${d.swarm.topology} agent swarm${d.swarm.agents.length ? ' using ' + d.swarm.agents.join(', ') : ''}`);
   if (d.avoid.length) L.push(`avoid (failed before, see laya.md): ${d.avoid.map((a) => `${a.id}${a.reason ? ' [' + a.reason + ']' : ''}`).join('; ')}`);
   if (d.install_queue.length) L.push(`better tools exist but are not installed: ${d.install_queue.map((q) => q.install || q.id).join(', ')} — offer \`/laya:install\` if the user wants them`);
   else if (d.task.needs_install) L.push('the user wants new tools: run the /laya:install flow (laya-conductor scout "<task>") instead of guessing');
-  L.push('rule: if any skill/plugin/MCP/agent fails or misbehaves, run `laya-conductor learn --item <kind:name> --outcome fail --note "<why>"` so laya.md remembers. Picks are advisory except where marked EXCLUSIVE/ONLY.');
+  L.push(`rule: if any skill/plugin/MCP/agent fails or misbehaves, run \`${nat ? 'laya-conductor' : P.launcher} learn --item <kind:name> --outcome fail --note "<why>"\` so laya.md remembers. Picks are advisory except where marked EXCLUSIVE/ONLY.`);
   L.push('</laya-decision>');
   return L.join('\n') + (blocks ? '\n' + blocks : '');
 }

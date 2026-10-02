@@ -57,7 +57,7 @@ laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
 | `/laya:models` | model + effort routing: list, `policy save\|balanced\|quality`, `apply hint\|auto\|delegate`, `force <alias\|off>`, `current <alias>` |
 | `/laya:loadout` | skill loadout: `exclusive off\|soft\|hard`, `inline on\|off`, `max <1-8>`, `budget <tokens>`, `confirm on\|off` |
 | `/laya:verbose` · `policy` · `refresh` · `statusline` | knobs |
-| `/laya:adapt codex\|gemini\|generic` | use Laya in other agents |
+| `/laya:adapt list\|all\|<agent>` | use Laya in Codex, Gemini, Hermes, Pi, Cursor, Windsurf, opencode, Copilot, ChatGPT, ... |
 | `/laya:export` | decisions + outcomes → Laya fine-tune dataset |
 
 `/stack`, `/install`, `/auto-laya` are also installed bare. Other bare names (`/status`, `/mode`…) are deliberately not, they would shadow built-ins.
@@ -112,7 +112,26 @@ Changes take effect from the next turn.
 
 ## Other agents
 
-Codex and Gemini CLI speak the same `hookSpecificOutput.additionalContext` protocol: `/laya:adapt codex|gemini` wires their hook config to the same engine through a stable launcher (`~/.laya/bin/laya-conductor`). Agents without hooks get the MCP server (`laya_decide`, `laya_learn`, `laya_search`, `laya_scout`) + an `AGENTS.md` rule (`adapt generic`). Codex hooks are experimental upstream; Gemini timeouts are in ms.
+One engine, several front doors. `/laya:adapt list` shows what is supported and what it found on your machine; `/laya:adapt <agent>` wires one; `/laya:adapt all` wires every detected agent (home-level config only).
+
+| Agent | How Laya reaches it | What `adapt` writes |
+|---|---|---|
+| **Codex** | `UserPromptSubmit` hook (same `additionalContext` protocol) + MCP | `~/.codex/hooks.json`, `[mcp_servers.laya]` in `config.toml` |
+| **Gemini CLI** | `BeforeAgent` hook + MCP | `~/.gemini/settings.json` |
+| **Hermes Agent** | `pre_llm_call` shell hook (returns `{"context": …}`) + MCP | `~/.hermes/config.yaml` (marker blocks) |
+| **Pi** | TypeScript extension on `before_agent_start` (Pi has no hooks file or built-in MCP) | `~/.pi/agent/extensions/laya.ts` |
+| **Cursor** | MCP + always-on rule (its prompt hook cannot add context) + `sessionStart` note | `~/.cursor/mcp.json`, `hooks.json`, `.cursor/rules/laya.mdc` |
+| **Windsurf** | MCP + global rule | `mcp_config.json`, `memories/global_rules.md` |
+| **opencode** | MCP + global `AGENTS.md` | `~/.config/opencode/opencode.json`, `AGENTS.md` |
+| **GitHub Copilot (VS Code)** | MCP + instructions, per workspace | `.vscode/mcp.json`, `.github/copilot-instructions.md` |
+| **ChatGPT** | Remote MCP over HTTP behind a secret URL (ChatGPT cannot start local programs) | nothing; prints the steps. Run `laya-conductor mcp --http`, tunnel it, add it under Developer mode |
+| **Anything else** | `adapt generic` (AGENTS.md rule) or `adapt mcp` (snippet for Cline, Roo, Zed, Continue, Goose, Claude Desktop, ...) | |
+
+Every adapter is idempotent and edits only what it owns (JSON keys, marker blocks, one file). A config it cannot parse (comments, trailing commas) or a YAML key you already have is never rewritten: Laya prints the snippet to add by hand instead.
+
+What other agents get: the picked skills (SKILL.md inlined, within the token budget; the rest as file paths to read), the "use only these" rule, the specialist roles and the avoid list, plus failure learning into the same `laya.md`. What stays Claude Code only: model/effort routing (the aliases are Claude models), the Skill tool, `exclusive hard` (it needs a PreToolUse hook, so other agents fall back to `soft`) and confirm-before-send. Agents that cannot run hooks (Cursor, Windsurf, opencode, Copilot, ChatGPT) only get Laya when the model calls `laya_decide`, so it is advisory by design.
+
+Laya reads installed skills from Claude's directories; picks for other agents come from that inventory. Codex hooks are experimental upstream, Gemini timeouts are in ms, and Hermes asks once to approve the new hook.
 
 ## Privacy & safety
 

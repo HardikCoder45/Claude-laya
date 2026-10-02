@@ -8,11 +8,12 @@ const setup = require('./setup');
 const inventory = require('./inventory');
 const lexical = require('./lexical');
 const loadout = require('./loadout');
+const agents = require('./agents');
 const models = require('./models');
 const { decide } = require('./decide');
 const { P, log, redact, trunc, appendLine, tokenize, sha } = require('./util');
 
-const STANDING = 'laya is active: it picks skills/agents/MCP per prompt and learns from failures in ~/.laya/laya.md. If a skill, plugin, MCP server or agent fails or misbehaves, record it with `laya-conductor learn --item <kind:name> --outcome fail --note "<why>"`.';
+const standing = (agent) => `laya is active: it picks skills/agents/MCP per prompt and learns from failures in ~/.laya/laya.md. If a skill, plugin, MCP server or agent fails or misbehaves, record it with \`${agents.native(agent) ? 'laya-conductor' : P.launcher} learn --item <kind:name> --outcome fail --note "<why>"\`.${agents.native(agent) ? '' : ' Laya MCP tools (laya_decide, laya_learn) are available if this agent has the laya server connected.'}`;
 
 async function sessionStart(inp) {
   const st = state.get();
@@ -27,7 +28,7 @@ async function sessionStart(inp) {
   else if (bg.action === 'setup-failed') msg = `laya ▸ setup failed: ${bg.error || 'see ~/.laya/laya.log'} — run /laya:doctor`;
   else if (bg.action === 'daemon-start') msg = `laya ▸ warming Laya · ${reg.count} items indexed`;
   else if (st.verbose !== 'quiet') msg = `laya ▸ ready · ${reg.count} items indexed · mode ${st.mode}${st.auto ? ' · auto-laya on' : ''}`;
-  const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: STANDING } };
+  const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: standing(inp.agent) } };
   if (msg) out.systemMessage = msg;
   return out;
 }
@@ -158,14 +159,18 @@ async function stop(inp) {
 const MAP = { 'session-start': sessionStart, prompt: userPrompt, 'pre-tool': preTool, 'post-tool': postTool, 'tool-failure': toolFailure, stop };
 
 async function run(event, agent) {
-  let out = {};
+  let out = {}, ag = agents.canon(agent) || 'claude-code';
   try {
     let inp = {};
     try { inp = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* empty stdin */ }
-    if (agent && !inp.agent) inp.agent = agent;
+    if (!agent && agents.canon(inp.agent)) ag = agents.canon(inp.agent);
+    inp = agents.normalize(ag, inp);
+    inp.agent = ag;
     out = (await (MAP[event] || (async () => ({})))(inp)) || {};
   } catch (e) { log(`hook ${event} error: ${e.stack || e.message}`); out = {}; }
-  process.stdout.write(JSON.stringify(out));
+  let shaped = {};
+  try { shaped = agents.render(ag, event, out) || {}; } catch (e) { log(`render ${ag}: ${e.message}`); }
+  process.stdout.write(JSON.stringify(shaped));
 }
 
 module.exports = { run, redecide, itemFor };

@@ -61,15 +61,16 @@ function render(d, items) {
   if (!skills.length || !lo) return { directive: '', blocks: '' };
   const inl = lo.inline || [], def = lo.deferred || [];
   const names = skills.map((s) => s.name);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const tool = require('./agents').native(d.agent); // only Claude Code has a Skill tool; elsewhere skills load by reading the file
   const L = [];
   if (lo.exclusive === 'off') L.push(`use skills (Skill tool): ${names.join(', ')}`);
   else {
     L.push(`skills selected by laya for THIS task: ${names.join(', ')}. Use ONLY these skills — do not invoke any other skill unless the user names it or these fail.${lo.exclusive === 'hard' ? ' (laya blocks Skill calls outside this set.)' : ''}`);
-    if (inl.length) L.push(`Instructions for ${inl.map((s) => s.name).join(', ')} are loaded below in <laya-skill>: follow them now, do not call the Skill tool for them again.`);
-    if (def.length) L.push(`Load before starting (Skill tool): ${def.map((s) => s.name).join(', ')}.`);
+    if (inl.length) L.push(`Instructions for ${inl.map((s) => s.name).join(', ')} are loaded below in <laya-skill>: follow them now${tool ? ', do not call the Skill tool for them again' : ''}.`);
+    if (def.length) L.push(tool ? `Load before starting (Skill tool): ${def.map((s) => s.name).join(', ')}.` : `Read these skill files before starting: ${def.map((s) => (byId.get(s.id) || {}).file || s.name).join(', ')}.`);
     L.push('If you delegate to a subagent, hand it these skill instructions (or tell it to load the same skills) and keep the same restriction.');
   }
-  const byId = new Map(items.map((i) => [i.id, i]));
   const blocks = inl.map((s) => {
     const it = byId.get(s.id), b = it && body(it.file);
     if (!b) return '';

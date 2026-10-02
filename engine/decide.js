@@ -9,6 +9,7 @@ const memory = require('./memory');
 const state = require('./state');
 const models = require('./models');
 const loadout = require('./loadout');
+const agents = require('./agents');
 const setup = require('./setup');
 const { P, redact, tokenize, appendLine, log, trunc } = require('./util');
 const fs = require('fs');
@@ -153,9 +154,11 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   const avoid = scored.filter((s) => s.banned || (s.adj && s.adj.penalty >= 0.15 && s.lex > 0.2))
     .sort((a, b) => b.lex - a.lex).slice(0, 3).map((s) => ({ id: s.it.id, reason: s.why || (s.adj && s.adj.why) || 'laya.md', banned: !!s.banned }));
 
-  const model = models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem, force: st.model_force });
+  // model aliases (opus/sonnet/haiku) and the hard exclusive hook only exist in Claude Code
+  const native = agents.native(agent);
+  const model = !native ? null : models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem, force: st.model_force });
   const current = st.current_model || models.detectCurrent(transcript) || models.idToAlias(sess.model) || null;
-  const lo = { exclusive: st.exclusive, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
+  const lo = { exclusive: !native && st.exclusive === 'hard' ? 'soft' : st.exclusive, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
   lo.inline = lo.inline.map(({ id, name, tok }) => ({ id, name, tok })); // bodies are re-read at injection time, never stored
   const tier = f.difficulty >= 4 || f.flags.sensitive ? { tier: 'deep', effort: 'high' } : f.difficulty <= 1 ? { tier: 'fast', effort: 'low' } : { tier: 'balanced', effort: 'med' };
   const swarm = { use: f.flags.multi_file && f.difficulty >= 4, topology: 'hierarchical', agents: picks.agents.map((a) => a.id) };

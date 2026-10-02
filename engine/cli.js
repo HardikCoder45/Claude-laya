@@ -190,11 +190,14 @@ const COMMANDS = {
     const r = await require('./installer').install(spec, { approve: !!flag(a, 'approve'), cwd: process.cwd() });
     print(JSON.stringify(r, null, 2)); if (!r.ok) process.exitCode = 1;
   },
-  adapt: (a) => print(JSON.stringify(require('./adapters').adapt(a[0]), null, 2)),
+  adapt: (a) => { const ad = require('./adapters'); print(ad.format(ad.adapt(positional(a)[0], { project: !flag(a, 'no-project') }))); },
   bootstrap: () => setup.bootstrap(),
   'daemon-run': () => setup.runDaemon(),
   'daemon-stop': () => print(setup.stopDaemon() ? 'daemon stopped' : 'daemon not running'),
-  mcp: () => require('./mcp').serve(),
+  mcp: async (a) => {
+    const srv = await require('./mcp').serve({ http: !!flag(a, 'http'), port: Number(flag(a, 'port', 8765)) || 8765 });
+    if (srv) process.stderr.write(`laya mcp http listening on 127.0.0.1:${srv.address().port}\n`);
+  },
 };
 
 async function main(argv) {

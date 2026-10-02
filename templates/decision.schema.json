@@ -32,7 +32,14 @@
         "claude-code",
         "codex",
         "gemini",
+        "hermes",
+        "pi",
         "cursor",
+        "windsurf",
+        "opencode",
+        "copilot",
+        "chatgpt",
+        "generic",
         "mcp"
       ]
     },
