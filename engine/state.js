@@ -16,6 +16,8 @@ const DEFAULTS = {
   skills_inline: true,      // inject the selected skills' SKILL.md into the turn so Claude does not have to load them
   max_skills: 4,            // how many skills one decision may select (1-8)
   skill_budget: 2200,       // tokens of SKILL.md text injected per turn (Claude Code caps hook context near 10k chars)
+  ack: true,                // ask Claude to say which selected skills it applies ("laya ▸ using: ..."), so use can be verified
+  enforce: 'named',         // off | named (block the turn's end once if a skill/MCP YOU named was ignored) | all (any selected skill/MCP)
   confirm: false,           // show the plan first and hold the prompt until you send it again
   budget_ms: 1500,       // max wait for the Laya daemon before falling back to lexical
   log_prompts: true,     // store (redacted, truncated) prompt text in decisions.jsonl for fine-tuning

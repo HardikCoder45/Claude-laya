@@ -9,6 +9,7 @@ const inventory = require('./inventory');
 const lexical = require('./lexical');
 const loadout = require('./loadout');
 const agents = require('./agents');
+const trace = require('./trace');
 const models = require('./models');
 const { decide } = require('./decide');
 const { P, log, redact, trunc, appendLine, tokenize, sha } = require('./util');
@@ -44,6 +45,9 @@ async function userPrompt(inp) {
   const d = held || await decide({ prompt, cwd: inp.cwd, sessionId: sid, agent: inp.agent || 'claude-code', transcript: inp.transcript_path });
   const out = {};
   const live = !d.skipped && st.mode === 'on';
+
+  // verification at Stop only makes sense for a turn Laya actually planned and injected into
+  state.setSession(sid, { armed: !!live && !d.skipped });
 
   // exclusive=hard: remember what this turn may load, the PreToolUse hook enforces it
   if (!d.skipped) state.setSession(sid, { allowSkills: live && st.exclusive === 'hard' && d.picks.skills.length ? d.picks.skills.map((p) => p.id) : null });
@@ -144,15 +148,32 @@ async function stop(inp) {
   const sid = inp.session_id;
   const s = state.getSession(sid);
   if (!s.lastDecision) return {};
-  const picks = s.lastDecision.picks || [];
-  const hit = picks.filter((p) => s.used.includes(p));
-  const ignored = picks.filter((p) => !s.used.includes(p));
-  const wins = s.used.filter((u) => !s.failedItems.includes(u)).slice(0, 8);
-  for (const w of wins) memory.record(w, 'win', '', { cwd: inp.cwd });
-  appendLine(P.decisions, JSON.stringify({ type: 'outcome', decision_id: s.lastDecision.id, ts: new Date().toISOString(), used: s.used, picked_used: hit, picked_ignored: ignored, failed: s.failedItems, tools: s.tools }));
-  state.setSession(sid, { used: [], failedItems: [], tools: 0, fails: 0, allowSkills: null });
   const st = state.get();
-  if (st.verbose === 'full') return { systemMessage: `laya ▸ turn done: used ${hit.length}/${picks.length} picks${s.failedItems.length ? ` · failed: ${s.failedItems.join(', ')}` : ''}${wins.length ? ` · +${wins.length} win(s) in laya.md` : ''}` };
+  const picks = s.lastDecision.picks || [];
+
+  // Did the turn really use what was selected? (transcript = the evidence; hooks only see tool calls, not inlined skills)
+  let v = null;
+  if (s.armed && s.lastDecision.expect) {
+    try { v = trace.verify(s.lastDecision.expect, trace.lastTurn(inp.transcript_path)); } catch (e) { log(`trace: ${e.message}`); }
+  }
+  // enforce: ask once for what the user named (or everything, enforce=all) before letting the turn end
+  if (v && st.enforce !== 'off' && !inp.stop_hook_active) {
+    const missed = v.unused(st.enforce === 'all');
+    if (missed.length) return { decision: 'block', reason: trace.nudge(missed), systemMessage: `laya \u25b8 ${missed.map((m) => m.name).join(', ')} not used yet: asking Claude to apply ${missed.length > 1 ? 'them' : 'it'}` };
+  }
+
+  const usedAll = [...new Set([...s.used, ...(v ? v.usedIds : [])])];
+  const hit = picks.filter((p) => usedAll.includes(p));
+  const ignored = picks.filter((p) => !usedAll.includes(p));
+  const wins = usedAll.filter((u) => !s.failedItems.includes(u)).slice(0, 8);
+  for (const w of wins) memory.record(w, 'win', '', { cwd: inp.cwd });
+  appendLine(P.decisions, JSON.stringify({ type: 'outcome', decision_id: s.lastDecision.id, ts: new Date().toISOString(), used: usedAll, picked_used: hit, picked_ignored: ignored, failed: s.failedItems, tools: s.tools,
+    verify: v ? { skills: v.skills.map((x) => [x.id, x.state]), mcp: v.mcp.map((x) => [x.id, x.calls]), agents: v.agents.map((x) => [x.id, x.calls]), model: v.model } : undefined }));
+  state.setSession(sid, { used: [], failedItems: [], tools: 0, fails: 0, allowSkills: null, armed: false, lastTrace: v ? trace.summary(v) : s.lastTrace });
+  const line = v ? trace.summary(v) : '';
+  const bad = line.includes('\n');
+  if (line && (st.verbose === 'full' || (st.verbose === 'normal') || bad)) return { systemMessage: line + (st.verbose === 'full' ? `${wins.length ? ` \u00b7 +${wins.length} win(s) in laya.md` : ''}${s.failedItems.length ? ` \u00b7 failed: ${s.failedItems.join(', ')}` : ''}` : '') };
+  if (st.verbose === 'full') return { systemMessage: `laya \u25b8 turn done: used ${hit.length}/${picks.length} picks${s.failedItems.length ? ` \u00b7 failed: ${s.failedItems.join(', ')}` : ''}${wins.length ? ` \u00b7 +${wins.length} win(s) in laya.md` : ''}` };
   return {};
 }
 

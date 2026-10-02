@@ -28,6 +28,23 @@ function mentioned(prompt, items) {
   return out;
 }
 
+// MCP servers the user named: "use supabase", "from github", "check my linear tickets", "playwright mcp", "$sentry".
+// Short names ("time", "fetch") only count after an explicit trigger word, so ordinary prose never forces a server in.
+function mentionedServers(prompt, items) {
+  const out = [];
+  for (const it of items) {
+    if (it.kind !== 'mcp' || !it.installed || /(^|[:_-])laya([:_-]|$)/i.test(it.id)) continue;
+    const base = it.name.split(':').pop().replace(/^(claude_ai_|plugin_)/i, '').replace(/([-_ ]?mcp|[-_ ]server)$/i, '').replace(/^mcp[-_ ]?(server[-_ ])?/i, '');
+    const forms = [...new Set([base, base.replace(/[-_]+/g, ' ')])].filter((n) => n.length >= 3);
+    for (const n of forms) {
+      const e = esc(n);
+      const rx = new RegExp(`(?:[$@]|\\bmcp[:\\s]+|\\b(?:use|using|via|through|with|from|ask|call|query|check|in|on)\\s+(?:the\\s+|my\\s+|our\\s+)?)${e}(?![\\w-])|(?<![\\w-])${e}\\s+(?:mcp|server|connector|tools?)\\b`, 'i');
+      if (rx.test(prompt)) { out.push(it); break; }
+    }
+  }
+  return out;
+}
+
 function body(file) {
   try {
     if (!file || fs.statSync(file).size > MAX_FILE) return null;
@@ -64,13 +81,14 @@ function render(d, items) {
   const byId = new Map(items.map((i) => [i.id, i]));
   const tool = require('./agents').native(d.agent); // only Claude Code has a Skill tool; elsewhere skills load by reading the file
   const L = [];
-  if (lo.exclusive === 'off') L.push(`use skills (Skill tool): ${names.join(', ')}`);
-  else {
-    L.push(`skills selected by laya for THIS task: ${names.join(', ')}. Use ONLY these skills — do not invoke any other skill unless the user names it or these fail.${lo.exclusive === 'hard' ? ' (laya blocks Skill calls outside this set.)' : ''}`);
-    if (inl.length) L.push(`Instructions for ${inl.map((s) => s.name).join(', ')} are loaded below in <laya-skill>: follow them now${tool ? ', do not call the Skill tool for them again' : ''}.`);
-    if (def.length) L.push(tool ? `Load before starting (Skill tool): ${def.map((s) => s.name).join(', ')}.` : `Read these skill files before starting: ${def.map((s) => (byId.get(s.id) || {}).file || s.name).join(', ')}.`);
-    L.push('If you delegate to a subagent, hand it these skill instructions (or tell it to load the same skills) and keep the same restriction.');
-  }
+  const why = (s) => { const it = byId.get(s.id); return it && it.desc ? `${s.name} (${it.desc.slice(0, 80).replace(/\s+\S*$/, '')})` : s.name; };
+  if (lo.exclusive === 'off') L.push(`skills selected by laya (${tool ? 'Skill tool' : 'SKILL.md'}): ${skills.map(why).join('; ')}.`);
+  else L.push(`skills selected by laya for THIS task: ${skills.map(why).join('; ')}. Use ONLY these skills — do not invoke any other skill unless the user names it or these fail.${lo.exclusive === 'hard' ? ' (laya blocks Skill calls outside this set.)' : ''}`);
+  if (skills.length > 1) L.push('They were chosen to work together: apply EVERY one that is relevant, do not stop after the first.');
+  if (inl.length) L.push(`Instructions for ${inl.map((s) => s.name).join(', ')} are loaded below in <laya-skill>: follow them now${tool ? ', do not call the Skill tool for them again' : ''}.`);
+  if (def.length) L.push(tool ? `Load before starting (Skill tool): ${def.map((s) => s.name).join(', ')}.` : `Read these skill files before starting: ${def.map((s) => (byId.get(s.id) || {}).file || s.name).join(', ')}.`);
+  if (lo.ack !== false) L.push(`In your first message this turn write one line: "laya ▸ using: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}" listing the skills you actually apply, and "· skipped: <skill> (<reason>)" for any you leave out.`);
+  if (lo.exclusive !== 'off') L.push('If you delegate to a subagent, hand it these skill instructions (or tell it to load the same skills) and keep the same restriction.');
   const blocks = inl.map((s) => {
     const it = byId.get(s.id), b = it && body(it.file);
     if (!b) return '';
@@ -87,4 +105,4 @@ function allowed(skillName, allow) {
   return allow.some((id) => { const a = bare(id); return a === n || a.endsWith(`:${n}`) || n.endsWith(`:${a}`); });
 }
 
-module.exports = { mentioned, plan, render, allowed, body };
+module.exports = { mentioned, mentionedServers, plan, render, allowed, body };

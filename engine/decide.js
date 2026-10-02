@@ -146,6 +146,15 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   }
   picks.skills = picks.skills.slice(0, Math.max(Math.min(8, st.max_skills || LIMIT.skill), named.length));
 
+  // same for MCP servers named outright; they lead the list and are marked so Claude is told it must use them
+  const namedMcp = loadout.mentionedServers(prompt, items).filter((it) => !memory.adjust(mem, it.id).banned);
+  for (const it of namedMcp.reverse()) {
+    const have = picks.mcp.find((p) => p.id === it.id);
+    if (have) { have.mentioned = true; picks.mcp.splice(picks.mcp.indexOf(have), 1); picks.mcp.unshift(have); }
+    else picks.mcp.unshift({ id: it.id, name: it.name, score: 1, lex: 1, laya_p: null, emb: null, tok: it.tok, installed: true, pinned: true, mentioned: true });
+  }
+  picks.mcp = picks.mcp.slice(0, Math.max(LIMIT.mcp, namedMcp.length));
+
   const haveInstalled = picks.skills.length + picks.agents.length > 0;
   const wantInstall = f.flags.needs_install || f.flags.needs_research && !haveInstalled || (!haveInstalled && f.domain !== 'chat' && f.difficulty >= 3);
   const queue = wantInstall ? scored.filter((s) => !s.it.installed && !s.banned && s.score >= tau + 0.1).sort((a, b) => b.score - a.score).slice(0, 2)
@@ -158,7 +167,7 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   const native = agents.native(agent);
   const model = !native ? null : models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem, force: st.model_force });
   const current = st.current_model || models.detectCurrent(transcript) || models.idToAlias(sess.model) || null;
-  const lo = { exclusive: !native && st.exclusive === 'hard' ? 'soft' : st.exclusive, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
+  const lo = { exclusive: !native && st.exclusive === 'hard' ? 'soft' : st.exclusive, ack: st.ack !== false, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
   lo.inline = lo.inline.map(({ id, name, tok }) => ({ id, name, tok })); // bodies are re-read at injection time, never stored
   const tier = f.difficulty >= 4 || f.flags.sensitive ? { tier: 'deep', effort: 'high' } : f.difficulty <= 1 ? { tier: 'fast', effort: 'low' } : { tier: 'balanced', effort: 'med' };
   const swarm = { use: f.flags.multi_file && f.difficulty >= 4, topology: 'hierarchical', agents: picks.agents.map((a) => a.id) };
@@ -179,7 +188,11 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
     context_budget: { max: 300 }, outcome: null,
   };
   record(d, prompt, st);
-  state.setSession(sessionId, { lastDecision: { ts: Date.now(), tokens: tokenize(prompt), id: d.id, picks: [...picks.skills, ...picks.agents, ...picks.mcp, ...picks.plugins].map((p) => p.id) }, fails: 0, tools: 0, used: [], failedItems: [], prompt: trunc(redact(prompt), 400) });
+  const inlined = new Set(lo.inline.map((x) => x.id));
+  const prefixOf = (p) => (byId.get(p.id) || {}).toolPrefix || `mcp__${String(p.name).replace(/[^\w-]/g, '_')}__`;
+  // what the Stop hook will check the finished turn against
+  const expect = { skills: picks.skills.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, inlined: inlined.has(p.id) })), mcp: picks.mcp.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, prefix: prefixOf(p) })), agents: picks.agents.map((p) => ({ id: p.id, name: p.name })), model: model ? { alias: model.alias, effort: model.effort, apply: st.model_apply } : null, ack: lo.ack };
+  state.setSession(sessionId, { lastDecision: { ts: Date.now(), tokens: tokenize(prompt), id: d.id, expect, picks: [...picks.skills, ...picks.agents, ...picks.mcp, ...picks.plugins].map((p) => p.id) }, fails: 0, tools: 0, used: [], failedItems: [], prompt: trunc(redact(prompt), 400) });
   return d;
 }
 

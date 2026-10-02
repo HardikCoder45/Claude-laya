@@ -31,7 +31,7 @@ function plan(d, st) {
   if (d.model) rows.push(['model', modelLine(d.model)]);
   if (p.skills.length) rows.push(['skills', skillLine(d)]);
   if (p.agents.length) rows.push(['agents', names(p.agents)]);
-  if (p.mcp.length) rows.push(['mcp', names(p.mcp)]);
+  if (p.mcp.length) rows.push(['mcp', p.mcp.map((m) => `${m.mentioned ? '\u2605 ' : ''}${m.name}${m.mentioned ? ' (you named it)' : ''}`).join(', ') + ' \u2192 tools loaded via ToolSearch']);
   if (p.plugins.length) rows.push(['plugins', names(p.plugins)]);
   const lo = d.loadout;
   if (lo && p.skills.length && lo.exclusive !== 'off') rows.push(['rule', lo.exclusive === 'hard' ? 'Claude may use ONLY these skills — other Skill calls are blocked' : `${agents.native(d.agent) ? 'Claude' : 'the agent'} is told to use ONLY these skills`]);
@@ -63,6 +63,7 @@ function message(d, st) {
 // Selected skills are the exception: their SKILL.md goes in whole (budgeted), because the user asked for them to be used.
 function context(d, st = state.get(), items = null) {
   const p = d.picks, L = ['<laya-decision v1>'];
+  const inv = () => items || (items = require('./inventory').load(d.cwd).items);
   L.push(`task: ${d.task.domain}, difficulty ${d.task.difficulty}/4 · engine: ${d.engine.mode}`);
   const m = d.model;
   if (m) {
@@ -73,13 +74,21 @@ function context(d, st = state.get(), items = null) {
   }
   let blocks = '';
   if (p.skills.length) {
-    const r = loadout.render(d, items || require('./inventory').load(d.cwd).items);
+    const r = loadout.render(d, inv());
     if (r.directive) L.push(r.directive);
     blocks = r.blocks;
   }
   const nat = agents.native(d.agent);
   if (p.agents.length) L.push(nat ? `use agents (Agent tool subagent_type): ${p.agents.map((s) => s.name).join(', ')}` : `useful specialist roles for this task: ${p.agents.map((s) => s.name).join(', ')}`);
-  if (p.mcp.length) L.push(`use MCP servers: ${p.mcp.map((s) => s.name).join(', ')}`);
+  if (p.mcp.length) {
+    const byId = new Map(inv().map((i) => [i.id, i]));
+    const rows = p.mcp.map((s) => {
+      const it = byId.get(s.id) || {}, pre = it.toolPrefix || `mcp__${String(s.name).replace(/[^\w-]/g, '_')}__`;
+      const seen = (it.tools || []).length ? `; known tools: ${it.tools.slice(0, 6).join(', ')}` : '';
+      return `${s.name}${s.mentioned ? ' (user named it: you MUST use it)' : ''} [tools ${pre}*${seen}]`;
+    });
+    L.push(`MCP servers selected by laya: ${rows.join(' | ')}. Use their tools for the data and actions they own instead of guessing, scraping or shell workarounds. If those tools are not in your tool list yet, load them first with ToolSearch (query "select:<tool name>" or the server name) and then call them.`);
+  }
   if (p.plugins.length) L.push(`relevant plugins: ${p.plugins.map((s) => s.name).join(', ')}`);
   if (d.swarm.use) L.push(`task is large: consider a ${d.swarm.topology} agent swarm${d.swarm.agents.length ? ' using ' + d.swarm.agents.join(', ') : ''}`);
   if (d.avoid.length) L.push(`avoid (failed before, see laya.md): ${d.avoid.map((a) => `${a.id}${a.reason ? ' [' + a.reason + ']' : ''}`).join('; ')}`);

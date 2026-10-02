@@ -328,6 +328,58 @@ const hook = (event, input) => {
   cli('models', 'apply', 'hint');
   ok('/laya:loadout + /laya:models force|apply delegate');
 
+  // ---- selected MCP servers + skills are verified against what the turn really did
+  {
+  const cwd2 = path.join(tmp, 'proj2'); fs.mkdirSync(cwd2);
+  w(path.join(cwd2, '.mcp.json'), JSON.stringify({ mcpServers: { supabase: { command: 'npx', args: ['-y', '@supabase/mcp'] }, 'mcp-server-time': { command: 'x' } } }));
+  w(path.join(process.env.CLAUDE_CONFIG_DIR, 'skills', 'xlsx', 'SKILL.md'), '---\nname: xlsx\ndescription: build and edit excel spreadsheets xlsx workbooks\n---\nUse openpyxl.');
+  const inv2 = inventory.load(cwd2, { force: true });
+  const sb = inv2.items.find((i) => i.id === 'mcp:supabase');
+  assert(sb && sb.toolPrefix === 'mcp__supabase__' && /database sql/.test(sb.desc), 'MCP servers get searchable descriptions and a tool prefix');
+  assert(!/sometimes/.test(inv2.items.find((i) => i.id === 'mcp:mcp-server-time').desc) && /timezone/.test(inv2.items.find((i) => i.id === 'mcp:mcp-server-time').desc));
+  // a connector that only exists at runtime is found from past transcripts, and a per-project server from ~/.claude.json
+  w(path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'p1', 's.jsonl'), '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__claude_ai_Gmail__search_threads","input":{}}]}}\n');
+  w(path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({ projects: { [cwd2]: { mcpServers: { linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } } } } }));
+  const inv3 = inventory.load(cwd2, { force: true }).items;
+  assert(inv3.find((i) => i.id === 'mcp:claude_ai_Gmail' && /search threads/.test(i.desc) && i.toolPrefix === 'mcp__claude_ai_Gmail__'), 'connector discovered from transcripts');
+  assert(inv3.find((i) => i.id === 'mcp:linear' && /issue ticket/.test(i.desc)), 'per-project MCP server from .claude.json');
+  ok('MCP inventory: project/plugin/user/connector servers, keyword hints, tool prefixes');
+
+  const pr2 = 'use the supabase mcp and the pdf skill to export the users table to a pdf report, then email nothing';
+  const mkT = (rows) => { const f = path.join(tmp, `t-${Math.random().toString(36).slice(2)}.jsonl`); fs.writeFileSync(f, rows.map((r) => JSON.stringify(r)).join('\n') + '\n'); return f; };
+  const userRow = { type: 'user', message: { role: 'user', content: pr2 } };
+  const asst = (...content) => ({ type: 'assistant', message: { model: 'claude-sonnet-5-5', content } });
+  const t0 = mkT([userRow]);
+  const out2 = hook('prompt', { session_id: 'v1', cwd: cwd2, prompt: pr2, transcript_path: t0 });
+  const ctx2 = out2.hookSpecificOutput.additionalContext;
+  assert(/MCP servers selected by laya: supabase \(user named it: you MUST use it\) \[tools mcp__supabase__\*/.test(ctx2) && /ToolSearch/.test(ctx2), 'named MCP server is forced in with its tool prefix');
+  assert(/laya ▸ using:/.test(ctx2) && /pdf/.test(ctx2));
+  assert(/★ supabase \(you named it\)/.test(out2.systemMessage), 'plan shows the named MCP server');
+  // turn that ignores everything: blocked once, with a nudge naming what was skipped
+  const lazy = mkT([userRow, asst({ type: 'text', text: 'Here is a pdf report.' })]);
+  const blk = hook('stop', { session_id: 'v1', cwd: cwd2, transcript_path: lazy });
+  assert(blk.decision === 'block' && /supabase/.test(blk.reason) && /mcp__supabase__/.test(blk.reason), 'ignored named MCP -> Claude is asked to use it');
+  // after the nudge: still unused, but never blocked twice (stop_hook_active) and the miss is shown
+  const again = hook('stop', { session_id: 'v1', cwd: cwd2, transcript_path: lazy, stop_hook_active: true });
+  assert(!again.decision && /turn check/.test(again.systemMessage) && /supabase ✘ not used/.test(again.systemMessage), again.systemMessage);
+  // faithful turn: skill confirmed in the ack line + MCP tool called + planned model ran -> compact ok line, picks credited
+  hook('prompt', { session_id: 'v2', cwd: cwd2, prompt: pr2 + ' please', transcript_path: t0 });
+  const good = mkT([userRow, asst({ type: 'text', text: 'laya ▸ using: pdf' }, { type: 'tool_use', id: 't1', name: 'mcp__supabase__execute_sql', input: {} }), { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'rows' }] } }, asst({ type: 'text', text: 'done' })]);
+  const fin = hook('stop', { session_id: 'v2', cwd: cwd2, transcript_path: good });
+  assert(!fin.decision && /turn ✔/.test(fin.systemMessage) && /mcp 1\/1/.test(fin.systemMessage) && /skills 1\/1/.test(fin.systemMessage), JSON.stringify(fin));
+  const outcomes = fs.readFileSync(util.P.decisions, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.type === 'outcome');
+  const lastOut = outcomes[outcomes.length - 1];
+  assert(lastOut.picked_used.includes('mcp:supabase') && lastOut.picked_used.includes('skill:pdf') && lastOut.verify.mcp[0][1] === 1, 'outcome ledger credits what was really used');
+  // enforce off: report only
+  state.set({ enforce: 'off' });
+  hook('prompt', { session_id: 'v3', cwd: cwd2, prompt: pr2 + ' again now', transcript_path: t0 });
+  assert(!hook('stop', { session_id: 'v3', cwd: cwd2, transcript_path: lazy }).decision);
+  state.set({ enforce: 'named' });
+  const tr = spawnSync('node', [BIN, 'trace'], { encoding: 'utf8', env: process.env }).stdout;
+  assert(/what actually happened/.test(tr) && /supabase/.test(tr), tr);
+  ok('turn verification: named MCP/skill ignored -> nudged once; faithful turn credited; trace command');
+  }
+
   // ---- the shipped template + example agree on the required keys
   const schema = JSON.parse(fs.readFileSync(path.join(ROOT, 'templates', 'decision.schema.json'), 'utf8'));
   const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'templates', 'decision.example.json'), 'utf8'));

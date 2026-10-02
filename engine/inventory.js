@@ -62,23 +62,68 @@ function item(kind, name, desc, source, file, extra = {}) {
 
 const norm = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, '_');
 
-function scanMcpFile(file, source, plugin, out) {
-  const j = readJson(file, null);
-  if (!j) return;
-  const servers = j.mcpServers || j;
-  if (typeof servers !== 'object') return;
+// An MCP server's name is all we know offline, so give well-known ones the words people actually use in prompts.
+const MCP_HINTS = [
+  [/git(hub)?(?!lab)/, 'github repository repo pull request pr issue commit branch code review'], [/gitlab/, 'gitlab merge request pipeline repository issue'],
+  [/linear/, 'linear issue ticket project sprint backlog'], [/jira|atlassian|confluence/, 'jira ticket issue confluence wiki atlassian'],
+  [/slack/, 'slack message channel thread team chat'], [/notion/, 'notion page database docs wiki notes'], [/asana|trello|clickup/, 'task board project ticket'],
+  [/supabase/, 'supabase postgres database sql table migration auth storage row policy'], [/postgres|pg$|mysql|sqlite|mariadb|database|db$/, 'database sql query table schema'],
+  [/mongo/, 'mongodb database collection document query'], [/redis/, 'redis cache key value'], [/firebase|firestore/, 'firebase firestore database auth hosting'],
+  [/playwright|puppeteer|browser|chrome|selenium/, 'browser automation web page testing screenshot scrape click end to end e2e'],
+  [/context7|docs|documentation/, 'library documentation docs api reference framework version'], [/fetch|web-?reader|firecrawl|scrape/, 'fetch web page url scrape crawl'],
+  [/brave|exa|tavily|perplexity|search|serp/, 'web search research find latest'], [/filesystem|fs$/, 'files filesystem read write directory'],
+  [/memory|knowledge/, 'memory remember knowledge graph notes'], [/sequential|thinking/, 'reasoning step by step plan analysis'],
+  [/figma/, 'figma design ui mockup component frame'], [/stripe/, 'stripe payments billing subscription invoice customer checkout'],
+  [/sentry|datadog|grafana|newrelic|honeycomb/, 'errors monitoring crash stack trace logs metrics alert observability'],
+  [/vercel|netlify|cloudflare|render|railway|heroku|fly/, 'deploy hosting production domain preview'], [/docker|kubernetes|k8s|terraform|helm/, 'container deploy cluster infrastructure devops'],
+  [/aws|gcp|google-?cloud|azure|s3/, 'cloud aws gcp azure bucket infrastructure'], [/gmail|mail|outlook/, 'email inbox message draft send mail'],
+  [/calendar|gcal/, 'calendar meeting event schedule availability'], [/drive|gdrive|dropbox|sheets|docs?$/, 'drive documents spreadsheet files share'],
+  [/youtube|video/, 'youtube video transcript'], [/twilio|sms/, 'sms phone text message'], [/shopify|woocommerce/, 'shop store product order ecommerce'],
+  [/hubspot|salesforce|crm/, 'crm contact deal lead customer'], [/airtable|sheet/, 'airtable spreadsheet table records'], [/openai|anthropic|llm|huggingface/, 'llm model ai embeddings'],
+  [/time|clock/, 'time timezone date now'], [/everything/, 'demo test tools'], [/n8n|zapier|make/, 'automation workflow integration'],
+];
+const HINT_RX = MCP_HINTS.map(([rx, w]) => [new RegExp(`\\b(?:${rx.source})\\b`), w]); // whole words only: 'time' must not hit 'sometimes'
+const mcpHint = (name) => { const n = String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); return HINT_RX.filter(([rx]) => rx.test(n)).map(([, w]) => w).join(' '); };
+const words = (s) => String(s).replace(/^plugin_/, '').replace(/^claude_ai_/, '').replace(/[-_]+/g, ' ');
+
+function addMcp(servers, file, source, plugin, out) {
+  if (!servers || typeof servers !== 'object') return;
   for (const [name, cfg] of Object.entries(servers)) {
     if (!cfg || typeof cfg !== 'object' || !(cfg.command || cfg.url || cfg.type)) continue;
     const label = plugin ? `${plugin}:${name}` : name;
     const prefix = plugin ? `mcp__plugin_${norm(plugin)}_${norm(name)}__` : `mcp__${norm(name)}__`;
-    const hint = cfg.url ? `remote MCP server ${new URL(cfg.url, 'http://x').host}` : `MCP server ${path.basename(String(cfg.command || ''))} ${(cfg.args || []).slice(0, 2).join(' ')}`;
-    out.push(item('mcp', label, `${name.replace(/[-_]/g, ' ')} ${hint}`, source, file, { toolPrefix: prefix, tok: 900 }));
+    const what = cfg.url ? `remote MCP server ${new URL(cfg.url, 'http://x').host}` : `MCP server ${path.basename(String(cfg.command || ''))} ${(cfg.args || []).slice(0, 2).join(' ')}`;
+    out.push(item('mcp', label, `${words(name)} ${mcpHint(name)} ${what}`, source, file, { toolPrefix: prefix, tok: 900 }));
   }
+}
+function scanMcpFile(file, source, plugin, out) {
+  const j = readJson(file, null);
+  if (j) addMcp(j.mcpServers || j, file, source, plugin, out);
+}
+
+// Servers that only exist at runtime (claude.ai connectors, anything added by a path we do not parse) still leave
+// tool names in past transcripts. Read the newest few: that is also real evidence the user has the server.
+function observedMcp() {
+  const root = path.join(P.claude, 'projects'), found = new Map();
+  const files = [];
+  for (const d of ls(root)) if (d.isDirectory()) for (const f of ls(path.join(root, d.name))) if (f.name.endsWith('.jsonl')) { const fp = path.join(root, d.name, f.name); files.push([fp, mtime(fp)]); }
+  const cutoff = Date.now() - 45 * 86400000;
+  for (const [fp] of files.filter(([, t]) => t > cutoff).sort((x, y) => y[1] - x[1]).slice(0, 30)) {
+    let txt = '';
+    try { const fd = fs.openSync(fp, 'r'), size = fs.fstatSync(fd).size, len = Math.min(size, 600000), b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, size - len); fs.closeSync(fd); txt = b.toString('utf8'); } catch { continue; }
+    for (const m of txt.matchAll(/"name":"(mcp__([A-Za-z0-9_-]+?)__([A-Za-z0-9_-]+))"/g)) {
+      if (/laya/i.test(m[2])) continue;
+      const e = found.get(m[2]) || { server: m[2], tools: new Set() };
+      e.tools.add(m[3]); found.set(m[2], e);
+    }
+  }
+  return [...found.values()];
 }
 
 function build(cwd) {
   const items = [];
   const seen = new Set();
+  const disabled = new Set();
   const push = (arr) => { for (const it of arr) if (!seen.has(it.id)) { seen.add(it.id); items.push(it); } };
 
   // user + project scope
@@ -92,10 +137,22 @@ function build(cwd) {
     scanMd(path.join(cwd, '.claude', 'commands'), 'command', '', 'project', tmp);
     scanMcpFile(path.join(cwd, '.mcp.json'), 'project', '', tmp);
   }
-  const cj = readJson(path.join(os.homedir(), '.claude.json'), {});
-  const userMcp = path.join(os.homedir(), '.claude.json');
-  if (cj.mcpServers) scanMcpFile(userMcp, 'user', '', tmp);
-  push(tmp);
+  // ~/.claude.json holds user-scope servers and, per project path, local-scope ones (and which are switched off)
+  const cfgFiles = [...new Set([path.join(P.claude, '.claude.json'), path.join(os.homedir(), '.claude.json')])];
+  for (const cf of cfgFiles) {
+    const cj = readJson(cf, null);
+    if (!cj) continue;
+    addMcp(cj.mcpServers, cf, 'user', '', tmp);
+    if (cwd && cj.projects) {
+      let dir = path.resolve(cwd);
+      for (let i = 0; i < 6; i++) { // the project entry may be the repo root above cwd
+        const pr = cj.projects[dir];
+        if (pr) { addMcp(pr.mcpServers, cf, 'project', '', tmp); for (const off of pr.disabledMcpServers || []) disabled.add(`mcp:${off}`); }
+        const up = path.dirname(dir); if (up === dir) break; dir = up;
+      }
+    }
+  }
+  push(tmp.filter((it) => !disabled.has(it.id)));
 
   // installed plugins
   const installed = readJson(path.join(P.claude, 'plugins', 'installed_plugins.json'), { plugins: {} }).plugins || {};
@@ -113,6 +170,7 @@ function build(cwd) {
     scanMd(path.join(root, 'agents'), 'agent', pname, `plugin:${id}`, t);
     scanMd(path.join(root, 'commands'), 'command', pname, `plugin:${id}`, t);
     scanMcpFile(path.join(root, '.mcp.json'), `plugin:${id}`, pname, t);
+    if (pj.mcpServers && typeof pj.mcpServers === 'object') addMcp(pj.mcpServers, path.join(root, '.claude-plugin', 'plugin.json'), `plugin:${id}`, pname, t);
     push(t);
   }
 
@@ -143,12 +201,24 @@ function build(cwd) {
     }
   }
 
-  return { version: 1, builtAt: Date.now(), cwd: cwd || null, count: items.length, items };
+  // runtime-only servers + the tool names we have actually seen (they make the match text far richer than a server name)
+  try {
+    const byPrefix = new Map(items.filter((i) => i.toolPrefix).map((i) => [i.toolPrefix, i]));
+    for (const o of observedMcp()) {
+      const tools = [...o.tools].slice(0, 12), tw = tools.map(words).join(' ');
+      const known = byPrefix.get(`mcp__${o.server}__`);
+      if (known) { known.tools = tools; known.desc = sanitize(`${known.desc} ${tw}`, 320); known.tok = tokOf(known.name, known.desc) + 800; continue; }
+      const it = item('mcp', o.server, `${words(o.server)} ${mcpHint(o.server)} ${tw}`, 'seen', null, { toolPrefix: `mcp__${o.server}__`, tools, tok: 900 });
+      if (!seen.has(it.id)) { seen.add(it.id); items.push(it); }
+    }
+  } catch { /* transcripts are a bonus, never required */ }
+
+  return { version: 2, builtAt: Date.now(), cwd: cwd || null, count: items.length, items };
 }
 
 function load(cwd, { force = false } = {}) {
   const cur = readJson(P.registry, null);
-  const stale = !cur || force || Date.now() - cur.builtAt > REG_TTL_MS || (cwd && cur.cwd !== cwd) ||
+  const stale = !cur || cur.version !== 2 || force || Date.now() - cur.builtAt > REG_TTL_MS || (cwd && cur.cwd !== cwd) ||
     mtime(path.join(P.claude, 'plugins', 'installed_plugins.json')) > cur.builtAt;
   if (!stale) return cur;
   ensureHome();

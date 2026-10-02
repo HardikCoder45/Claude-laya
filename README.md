@@ -57,6 +57,7 @@ laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
 | `/laya:models` | model + effort routing: list, `policy save\|balanced\|quality`, `apply hint\|auto\|delegate`, `force <alias\|off>`, `current <alias>` |
 | `/laya:loadout` | skill loadout: `exclusive off\|soft\|hard`, `inline on\|off`, `max <1-8>`, `budget <tokens>`, `confirm on\|off` |
 | `/laya:verbose` · `policy` · `refresh` · `statusline` | knobs |
+| `/laya:trace` | what the last prompt selected vs what the turn actually did |
 | `/laya:adapt list\|all\|<agent>` | use Laya in Codex, Gemini, Hermes, Pi, Cursor, Windsurf, opencode, Copilot, ChatGPT, ... |
 | `/laya:export` | decisions + outcomes → Laya fine-tune dataset |
 
@@ -105,6 +106,27 @@ Laya selects up to `max` skills (default 4, `/laya:loadout max N`) and the agent
 - Subagents are told to receive the same skill instructions and keep the same restriction.
 
 Changes take effect from the next turn.
+
+## MCP servers
+
+Laya reads MCP servers from `.mcp.json`, user and per-project entries in `~/.claude.json` (also under `CLAUDE_CONFIG_DIR`), plugins (`.mcp.json` and inline in `plugin.json`), and any `mcp__<server>__<tool>` it finds in your recent transcripts (that is how claude.ai connectors such as Gmail or Calendar show up). Servers are matched on their name, well-known keywords (`supabase` → database, sql, migration; `playwright` → browser, screenshot, e2e) and the tool names Laya has seen. Name one in your prompt ("use supabase", "from github", "playwright mcp") and it is always selected. Claude is told the tool prefix and to load the tools with `ToolSearch` if they are not in its list yet.
+
+## Did it actually happen?
+
+When a turn ends, Laya checks the transcript against what it selected and shows one line (a short table if something was ignored):
+
+```
+laya ▸ turn ✔ skills 3/3 · mcp 1/1 · model opus
+laya ▸ turn check
+  skills   pdf ✔ called · xlsx ✔ applied · docx ◐ loaded, not confirmed
+  mcp      supabase ✘ not used
+  model    ran sonnet, planned opus/high ✘ → /model opus
+```
+
+- **skills**: `called` (Skill tool), `applied` (Claude named it in its `laya ▸ using:` line), `skipped` (left out with a reason), `delivered` (instructions were in context but not confirmed), `missed` (never loaded).
+- **mcp**: counted tool calls. **model**: the model that answered vs the plan (or an Agent call delegating to it).
+- `/laya:loadout enforce named` (default): if a skill or MCP server **you named** was ignored, Claude is asked once to use it before the turn can end. `enforce all` does the same for every selection, `off` only reports. `/laya:loadout ack off` stops asking Claude for the `using:` line.
+- `/laya:trace` shows the last plan and what really happened. The outcome ledger now credits only what was used.
 
 ## Research & install
 

@@ -174,9 +174,32 @@ const COMMANDS = {
     if (sub === 'inline' && ['on', 'off'].includes(v)) { state.set({ skills_inline: v === 'on' }); return print(`inline → ${v}${v === 'on' ? ' (selected SKILL.md text is injected with the prompt)' : ' (names only; Claude loads skills itself)'}`); }
     if (sub === 'max' && num(v, 1, 8)) { state.set({ max_skills: num(v, 1, 8) }); return print(`max skills per prompt → ${num(v, 1, 8)}`); }
     if (sub === 'budget' && num(v, 200, 12000)) { state.set({ skill_budget: num(v, 200, 12000) }); return print(`inline budget → ${num(v, 200, 12000)} tokens (skills that do not fit whole are loaded via the Skill tool instead)`); }
+    if (sub === 'enforce' && ['off', 'named', 'all'].includes(v)) { state.set({ enforce: v }); return print(`enforce → ${v}${v === 'named' ? ' (if a skill or MCP server you named is ignored, Claude is asked once to use it before the turn ends)' : v === 'all' ? ' (same for every selected skill and MCP server)' : ' (Laya only reports what was used)'}`); }
+    if (sub === 'ack' && ['on', 'off'].includes(v)) { state.set({ ack: v === 'on' }); return print(`ack → ${v}${v === 'on' ? ' (Claude states which selected skills it applies, so use can be verified)' : ' (inlined skills can only be reported as loaded)'}`); }
     if (sub === 'confirm' && ['on', 'off'].includes(v)) { state.set({ confirm: v === 'on' }); return print(`confirm → ${v}${v === 'on' ? ' (Laya shows the plan and holds the prompt; send it again to run it)' : ''}`); }
-    print(`exclusive ${st.exclusive} · inline ${st.skills_inline ? 'on' : 'off'} · max ${st.max_skills} skills · budget ${st.skill_budget} tok · confirm ${st.confirm ? 'on' : 'off'}\n` +
-      'usage: loadout exclusive off|soft|hard · loadout inline on|off · loadout max <1-8> · loadout budget <tokens> · loadout confirm on|off');
+    print(`exclusive ${st.exclusive} · inline ${st.skills_inline ? 'on' : 'off'} · max ${st.max_skills} skills · budget ${st.skill_budget} tok · confirm ${st.confirm ? 'on' : 'off'} · enforce ${st.enforce} · ack ${st.ack ? 'on' : 'off'}\n` +
+      'usage: loadout exclusive off|soft|hard · loadout inline on|off · loadout max <1-8> · loadout budget <tokens> · loadout confirm on|off · loadout enforce off|named|all · loadout ack on|off');
+  },
+  trace: () => {
+    // last planned turn: what Laya selected and what the turn actually did (from the Stop-hook outcome line)
+    const rows = (() => { try { return fs.readFileSync(P.decisions, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); } catch { return []; } })();
+    const d = [...rows].reverse().find((r) => r.schema && !r.skipped && r.picks);
+    if (!d) return print('no decision yet: send a prompt first');
+    const o = [...rows].reverse().find((r) => r.type === 'outcome' && r.decision_id === d.id);
+    const emit = require('./emit');
+    const L = [`last plan · ${d.task.domain}·d${d.task.difficulty}`, emit.plan(d, state.get())];
+    if (!o) L.push('\nturn not finished yet (or Laya was off for it): no outcome recorded');
+    else if (!o.verify) L.push(`\nused: ${o.used.join(', ') || 'nothing from the plan'} (no transcript check available)`);
+    else {
+      const v = o.verify;
+      L.push('\nwhat actually happened');
+      for (const [id, st] of v.skills) L.push(`  skill   ${id.replace(/^skill:/, '').padEnd(24)} ${st}`);
+      for (const [id, n] of v.mcp) L.push(`  mcp     ${id.replace(/^mcp:/, '').padEnd(24)} ${n ? n + ' call(s)' : 'not used'}`);
+      for (const [id, n] of v.agents) L.push(`  agent   ${id.replace(/^agent:/, '').padEnd(24)} ${n ? 'used' : 'not used'}`);
+      if (v.model) L.push(`  model   planned ${v.model.planned}${v.model.effort ? '/' + v.model.effort : ''} · ran ${v.model.actual || '?'}${v.model.delegated ? ' (delegated via Agent)' : ''} · ${v.model.ok ? 'match' : v.model.ok === false ? 'DIFFERENT' : 'unknown'}`);
+      L.push('\nskill states: called = Skill tool · applied = Claude named it in "laya ▸ using:" · skipped = left out with a reason · delivered = text was in context, not confirmed · missed = never loaded');
+    }
+    print(L.join('\n'));
   },
   mode: (a) => { const v = a[0]; if (!['on', 'shadow', 'off'].includes(v)) return print(`mode=${state.get().mode} (on|shadow|off)`); state.set({ mode: v }); print(`laya mode → ${v}`); },
   verbose: (a) => { const v = a[0]; if (!['quiet', 'normal', 'full'].includes(v)) return print(`verbose=${state.get().verbose} (quiet|normal|full)`); state.set({ verbose: v }); print(`laya verbosity → ${v}`); },
