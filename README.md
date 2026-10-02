@@ -1,4 +1,4 @@
-# Laya — the meta-plugin that chooses (and installs) your Claude Code stack
+# Claude's Laya — the meta-plugin that chooses (and installs) your Claude Code stack
 
 <div align="center">
   <img src="assets/logo.webp" alt="Laya Logo" width="300" />

@@ -7,7 +7,7 @@
     {
       "name": "laya",
       "source": "./",
-      "description": "Laya picks the best skills, agents, MCP servers and plugins before every prompt, auto-installs better ones, and learns from failures (laya.md).",
+      "description": "Claude's Laya picks the best skills, agents, MCP servers and plugins before every prompt, auto-installs better ones, and learns from failures (laya.md).",
       "version": "1.0.0",
       "license": "MIT",
       "keywords": [
@@ -20,5 +20,5 @@
       ]
     }
   ],
-  "description": "Laya: the meta-plugin that chooses, installs and learns your Claude Code stack."
+  "description": "Claude's Laya: the meta-plugin that chooses, installs and learns your Claude Code stack."
 }
