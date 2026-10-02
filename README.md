@@ -1,6 +1,14 @@
 # Laya — the meta-plugin that chooses (and installs) your Claude Code stack
 
+<div align="center">
+  <img src="assets/logo.webp" alt="Laya Logo" width="300" />
+</div>
+
 Before **every prompt**, Laya's decision engine picks the best skills, agents, MCP servers and plugins from everything you have (and everything you *could* have), tells you what it picked, and hands Claude a compact decision. It researches and installs better tools on request, and learns from failures in a universal `~/.laya/laya.md`.
+
+<div align="center">
+  <img src="assets/screenshot.webp" alt="Laya in Action" width="900" />
+</div>
 
 ```
 you ▸ build a react dashboard with supabase auth
@@ -90,5 +98,11 @@ claude plugin validate .
 claude --plugin-dir . ...           # try it without installing
 ```
 Uninstall: `claude plugin uninstall laya`, `laya-conductor daemon-stop`, `rm -rf ~/.laya` (and the 3 files marked `<!-- laya-shim -->` in `~/.claude/commands`).
+
+## License
+
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+
+---
 
 Built on [Laya](https://github.com/NandhaKishorM/laya) (Apache-2.0) by Nandha Kishor M. This plugin is an independent integration.
