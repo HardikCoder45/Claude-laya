@@ -1,7 +1,7 @@
 {
   "name": "laya",
   "displayName": "Claude's Laya",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Meta-plugin that runs the Laya decision engine before every prompt: it picks the best skills, agents, MCP servers and plugins, researches and installs better ones, and learns from failures in a universal laya.md.",
   "author": { "name": "Hardik Arora" },
   "license": "MIT",

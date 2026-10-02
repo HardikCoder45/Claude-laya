@@ -228,5 +228,13 @@
     "max": 300
   },
   "outcome": null,
-  "prompt": "research and install the best plugins for building a saas billing dashboard"
+  "prompt": "research and install the best plugins for building a saas billing dashboard",
+  "loadout": {
+    "exclusive": "soft",
+    "inline_on": true,
+    "inline": [],
+    "deferred": [],
+    "inline_tokens": 0,
+    "budget": 2200
+  }
 }

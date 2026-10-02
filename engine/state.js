@@ -9,8 +9,14 @@ const DEFAULTS = {
   install_policy: 'trusted', // ask (always confirm) | trusted (auto for official sources) | off
   trusted_sources: ['claude-plugins-official', 'anthropic-agent-skills', 'modelcontextprotocol', 'vercel-labs', 'anthropics'],
   model_policy: 'balanced', // save | balanced | quality: how aggressively to trade capability for tokens
-  model_apply: 'hint',      // hint (suggest) | auto (Claude switches model/effort itself where it can)
-  current_model: null,      // optional alias you are running now, so Laya only speaks up when it differs
+  model_apply: 'hint',      // hint (suggest /model) | auto (Claude switches itself where it can) | delegate (work runs via Agent model=<alias>)
+  model_force: null,        // alias to always use, whatever the task (/laya:models force <alias>)
+  current_model: null,      // manual override; normally detected from the session transcript
+  exclusive: 'soft',        // off | soft (tell Claude to use ONLY the selected skills) | hard (also block other Skill calls)
+  skills_inline: true,      // inject the selected skills' SKILL.md into the turn so Claude does not have to load them
+  max_skills: 4,            // how many skills one decision may select (1-8)
+  skill_budget: 2200,       // tokens of SKILL.md text injected per turn (Claude Code caps hook context near 10k chars)
+  confirm: false,           // show the plan first and hold the prompt until you send it again
   budget_ms: 1500,       // max wait for the Laya daemon before falling back to lexical
   log_prompts: true,     // store (redacted, truncated) prompt text in decisions.jsonl for fine-tuning
   statusline: true,

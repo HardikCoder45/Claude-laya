@@ -33,7 +33,16 @@ Until that finishes Laya runs in **lexical mode** (BM25) so nothing ever blocks.
 
 ## What you see
 
-Every prompt prints one `laya ▸` line (what was picked, what to avoid, what to install, engine + latency). `/laya:verbose quiet|normal|full` changes it; `full` adds scores and flags. SessionStart, failures (`recorded failure: mcp:x → laya.md`), auto-laya re-picks and turn outcomes print too.
+Before the model sees your prompt, Laya prints the plan: the model + effort, every selected skill (★ = you named it, with how it will be loaded), agents, MCP servers, what to avoid, what to install, engine + latency:
+
+```
+laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
+  model    sonnet/high (−50% tokens) · now opus → switch with /model sonnet + /effort high
+  skills   ✔ frontend-design (0.63, 1.2k tok loaded) · ✔ webapp-testing (0.42, 0.9k tok loaded)
+  rule     Claude is told to use ONLY these skills
+```
+
+`/laya:verbose quiet|normal|full` changes it; `full` adds scores and flags. SessionStart, failures (`recorded failure: mcp:x → laya.md`), auto-laya re-picks and turn outcomes print too.
 
 ## Commands
 
@@ -45,7 +54,8 @@ Every prompt prints one `laya ▸` line (what was picked, what to avoid, what to
 | `/laya:status` · `doctor` · `explain` · `ledger` | health, diagnostics, why-this-pick, laya.md summary |
 | `/laya:learn` · `pin` · `ban` | teach laya.md by hand |
 | `/laya:mode on\|shadow\|off` | shadow = show picks, inject nothing (calibrate first) |
-| `/laya:models` | model + effort routing: list, `policy save\|balanced\|quality`, `apply hint\|auto`, `current <alias>` |
+| `/laya:models` | model + effort routing: list, `policy save\|balanced\|quality`, `apply hint\|auto\|delegate`, `force <alias\|off>`, `current <alias>` |
+| `/laya:loadout` | skill loadout: `exclusive off\|soft\|hard`, `inline on\|off`, `max <1-8>`, `budget <tokens>`, `confirm on\|off` |
 | `/laya:verbose` · `policy` · `refresh` · `statusline` | knobs |
 | `/laya:adapt codex\|gemini\|generic` | use Laya in other agents |
 | `/laya:export` | decisions + outcomes → Laya fine-tune dataset |
@@ -72,7 +82,29 @@ Laya answers in ~0.6 s warm (Apple GPU), 10 options per question because the che
 
 ## Model + effort routing
 
-Each decision also picks the **cheapest model that is capable enough** from `~/.laya/models.json` (defaults: haiku, sonnet, opus, fable) and an effort level, shown as `model: sonnet/high (−40% tokens)`. Claude is told to delegate trivial subtasks to the cheapest model and hard reviews to the strongest via the Agent tool's `model` param. A model with failures in laya.md (`model:<alias>`) is skipped. Tiers and costs are **relative guesses, not prices**: edit the file to match your plan. A hook cannot switch the live session model; with `/laya:models apply auto` Claude switches it itself when session tools (desktop app) exist, otherwise it suggests `/model` and `/effort`. Changes take effect from the next turn.
+Each decision picks the **cheapest model that is capable enough** from `~/.laya/models.json` (defaults: haiku, sonnet, opus, fable) and an effort level. Tiers and costs are **relative guesses, not prices**: edit the file to match your plan. A model with failures in laya.md (`model:<alias>`) is skipped; `pin model:<alias>` in laya.md or `/laya:models force <alias>` overrides the routing.
+
+Laya reads the model your session is actually running (last assistant turn in the transcript, or SessionStart), so it only speaks up when the pick differs. A hook cannot switch the live model, so there are three ways to *apply* the pick (`/laya:models apply …`):
+
+| apply | what happens |
+|---|---|
+| `hint` (default) | shows `switch with /model sonnet + /effort high`; you decide |
+| `auto` | Claude switches itself when session tools (`set_session_model`) exist, otherwise suggests `/model` |
+| `delegate` | when the pick differs from the running model, Claude runs the substantive work through the Agent tool with `model=<pick>` and relays the result. Works in every client. |
+
+Independent of `apply`, Claude is told to send trivial subtasks to the cheapest model and hard reviews to the strongest via the Agent tool's `model` param.
+
+## Skill loadout
+
+Laya selects up to `max` skills (default 4, `/laya:loadout max N`) and the agent is told to use **those and only those**:
+
+- **Inlined**: the selected skills' `SKILL.md` text is injected with your prompt (frontmatter stripped, `base=` path included so relative references resolve), so Claude starts with the instructions already loaded. Only *installed* skills are ever inlined. A skill that does not fit whole in the token budget (`/laya:loadout budget`, default 2200 tokens ≈ 9k chars, Claude Code caps hook context near 10k chars) is not truncated: Claude is told to load it with the Skill tool first.
+- **Exclusive**: `soft` (default) tells Claude to use only the selected skills; `hard` also denies any other `Skill` tool call for that turn via a PreToolUse hook (Laya's own skills stay allowed; ends at Stop). `off` goes back to plain suggestions.
+- **Named skills win**: "use the pdf skill", "$pdf", "pdf skill" always select that skill, whatever the ranking says.
+- **Confirm first**: `/laya:loadout confirm on` holds your prompt and shows the plan; send the same prompt again within 5 minutes to run it with exactly that plan (change it first with `/laya:pin`, `/laya:ban`, `/laya:models force`). Editing the prompt re-decides. Claude Code only: other agents ignore it.
+- Subagents are told to receive the same skill instructions and keep the same restriction.
+
+Changes take effect from the next turn.
 
 ## Research & install
 

@@ -400,14 +400,79 @@
         "apply": {
           "enum": [
             "hint",
-            "auto"
+            "auto",
+            "delegate"
           ]
         },
         "current": {
           "type": [
             "string",
             "null"
+          ],
+          "description": "running model: manual override, else last assistant turn in the transcript, else SessionStart"
+        },
+        "forced": {
+          "type": "boolean",
+          "description": "true when the model came from /laya:models force or a model:<alias> pin in laya.md"
+        },
+        "switch": {
+          "type": "boolean",
+          "description": "selected model differs from the model the session is running"
+        }
+      }
+    },
+    "loadout": {
+      "type": "object",
+      "description": "Skills selected for this prompt and how they reach the agent. Bodies are re-read at injection time and never stored here.",
+      "properties": {
+        "exclusive": {
+          "enum": [
+            "off",
+            "soft",
+            "hard"
           ]
+        },
+        "inline_on": {
+          "type": "boolean"
+        },
+        "inline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "tok": {
+                "type": "integer"
+              }
+            }
+          },
+          "description": "skills whose SKILL.md is injected with the prompt"
+        },
+        "deferred": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "selected skills that did not fit the budget: loaded with the Skill tool"
+        },
+        "inline_tokens": {
+          "type": "integer"
+        },
+        "budget": {
+          "type": "integer"
         }
       }
     }
@@ -458,6 +523,10 @@
         },
         "pinned": {
           "type": "boolean"
+        },
+        "mentioned": {
+          "type": "boolean",
+          "description": "the user named this skill in the prompt"
         }
       }
     }

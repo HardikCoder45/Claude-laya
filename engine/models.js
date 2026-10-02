@@ -1,6 +1,7 @@
 'use strict';
 // Model registry + routing: pick the cheapest model that is capable enough, with the right effort.
 // Costs are RELATIVE weights (not dollars) and tiers are capability guesses: edit ~/.laya/models.json to match your plan.
+const fs = require('fs');
 const path = require('path');
 const { P, readJson } = require('./util');
 const memory = require('./memory');
@@ -28,15 +29,49 @@ const cap = (arr, e) => { // highest supported effort <= wanted
   return arr[0];
 };
 
-// task: {difficulty 1-4, sensitive, multi_file, domain}; policy: save | balanced | quality
-function choose(task, { policy = 'balanced', mem = null } = {}) {
+// 'claude-opus-4-1-20250805' / 'opus[1m]' / 'Opus' -> 'opus' (registry alias), or null when unknown
+function idToAlias(id, reg = registry()) {
+  const s = String(id || '').toLowerCase().replace(/\[.*\]$/, '').trim();
+  if (!s || s === '<synthetic>') return null;
+  const exact = reg.find((m) => m.alias.toLowerCase() === s || String(m.id).toLowerCase() === s);
+  if (exact) return exact.alias;
+  const fam = reg.find((m) => m.alias.length >= 3 && s.includes(m.alias.toLowerCase()));
+  return fam ? fam.alias : null;
+}
+
+// The model the session is really running: last assistant turn in the transcript (hooks get its path on every prompt).
+function detectCurrent(transcriptPath, reg = registry()) {
+  if (!transcriptPath) return null;
+  let fd;
+  try {
+    fd = fs.openSync(transcriptPath, 'r');
+    const size = fs.fstatSync(fd).size, len = Math.min(size, 262144), buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('"model"')) continue;
+      try {
+        const j = JSON.parse(lines[i]);
+        const m = (j.message && j.message.model) || j.model;
+        if (m && m !== '<synthetic>') return idToAlias(m, reg) || String(m);
+      } catch { /* partial first line of the tail */ }
+    }
+  } catch { /* no transcript yet */ } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* closed */ } }
+  return null;
+}
+
+// task: {difficulty 1-4, sensitive, multi_file, domain}; policy: save | balanced | quality; force: alias the user pinned
+function choose(task, { policy = 'balanced', mem = null, force = null } = {}) {
   const reg = registry();
   if (!reg.length) return null;
   let need = Math.max(1, Math.min(4, task.difficulty + (task.sensitive ? 1 : 0) - (task.domain === 'chat' ? 1 : 0)));
   if (policy === 'quality') need = Math.min(4, need + 1);
   const usable = reg.filter((m) => { const a = mem ? memory.adjust(mem, `model:${m.alias}`) : { banned: false }; return !a.banned; });
   const pool = usable.length ? usable : reg;
-  const pickM = pool.find((m) => m.tier >= need) || pool[pool.length - 1];
+  // precedence: explicit /laya:models force > pin in laya.md (model:<alias>) > cheapest capable model
+  const forced = force ? reg.find((m) => m.alias === force) : null;
+  const pinned = !forced && mem ? reg.find((m) => memory.adjust(mem, `model:${m.alias}`).pinned) : null;
+  const pickM = forced || pinned || pool.find((m) => m.tier >= need) || pool[pool.length - 1];
   let ei = need === 1 ? 0 : need === 2 ? 1 : need === 3 ? 2 : (task.sensitive || task.multi_file ? 3 : 2);
   if (policy === 'save') ei = Math.max(0, ei - 1);
   if (policy === 'quality') ei = Math.min(4, ei + 1);
@@ -44,14 +79,15 @@ function choose(task, { policy = 'balanced', mem = null } = {}) {
   const top = reg[reg.length - 1];
   const spend = pickM.cost * (effort ? EFFORT_COST[effort] : 0.75);
   const topSpend = top.cost * EFFORT_COST.high;
-  const why = `need ${need}/4 (${task.sensitive ? 'sensitive, ' : ''}difficulty ${task.difficulty})${policy !== 'balanced' ? `, policy ${policy}` : ''}`;
+  const why = forced ? `forced by you (/laya:models force ${forced.alias})` : pinned ? 'pinned in laya.md'
+    : `need ${need}/4 (${task.sensitive ? 'sensitive, ' : ''}difficulty ${task.difficulty})${policy !== 'balanced' ? `, policy ${policy}` : ''}`;
   // delegate-cheap: subtasks that are trivial go to the cheapest model; reviews go one tier up
   const cheapest = reg[0], strongest = top;
   return {
-    alias: pickM.alias, id: pickM.id, effort, tier: pickM.tier, rel_cost: +spend.toFixed(2),
+    alias: pickM.alias, id: pickM.id, effort, tier: pickM.tier, forced: !!(forced || pinned), rel_cost: +spend.toFixed(2),
     savings_pct: Math.max(0, Math.round((1 - spend / topSpend) * 100)), reason: why,
     delegate: { trivial: cheapest.alias, review: strongest.alias },
   };
 }
 
-module.exports = { choose, registry, DEFAULTS, EFFORTS };
+module.exports = { choose, registry, idToAlias, detectCurrent, DEFAULTS, EFFORTS };

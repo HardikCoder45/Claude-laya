@@ -36,6 +36,9 @@ function heuristic(prompt) {
   const n = prompt.split(/\s+/).length;
   let difficulty = n < 8 ? 1 : n < 30 ? 2 : n < 90 ? 3 : 4;
   if (/\b(architect\w*|comprehensive|god.?tier|end.to.end|entire|migrat\w+|all phases|from scratch)\b/i.test(prompt)) difficulty = Math.min(4, difficulty + 1);
+  // length alone misjudges: a short "debug this race condition" is hard, a long pasted log with "summarize" is not
+  if (/\b(debug\w*|race condition|deadlock|concurren\w+|root cause|optimi[sz]\w*|algorithm|distributed|security (audit|review)|design (a|the)|why (is|does|are)|refactor\w*|rewrite|overhaul|whole|implement\w*)\b|```|\bat \S+:\d+/i.test(prompt)) difficulty = Math.min(4, difficulty + 1);
+  else if (n < 40 && /\b(rename|typo|format|lint|comment|summari[sz]e|translate|what is|explain)\b/i.test(prompt)) difficulty = Math.max(1, difficulty - 1);
   const flags = {
     needs_research: RX.needs_research.test(prompt), needs_install: RX.needs_install.test(prompt),
     multi_file: RX.multi_file.test(prompt) && n > 12, sensitive: RX.sensitive.test(prompt), needs_tools: RX.tools.test(prompt),

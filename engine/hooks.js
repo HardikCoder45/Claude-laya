@@ -7,8 +7,10 @@ const emit = require('./emit');
 const setup = require('./setup');
 const inventory = require('./inventory');
 const lexical = require('./lexical');
+const loadout = require('./loadout');
+const models = require('./models');
 const { decide } = require('./decide');
-const { P, log, redact, trunc, appendLine, tokenize } = require('./util');
+const { P, log, redact, trunc, appendLine, tokenize, sha } = require('./util');
 
 const STANDING = 'laya is active: it picks skills/agents/MCP per prompt and learns from failures in ~/.laya/laya.md. If a skill, plugin, MCP server or agent fails or misbehaves, record it with `laya-conductor learn --item <kind:name> --outcome fail --note "<why>"`.';
 
@@ -17,6 +19,8 @@ async function sessionStart(inp) {
   const bg = setup.ensureBackground();
   try { require('./adapters').shim({ onlyIfStale: true }); } catch (e) { log(`shim refresh: ${e.message}`); }
   const reg = inventory.load(inp.cwd, { force: false });
+  const live = inp.model && (inp.model.id || inp.model);
+  if (live && typeof live === 'string') state.setSession(inp.session_id, { model: live });
   let msg = '';
   if (bg.action === 'setup-start') msg = 'laya ▸ first run: installing Laya in the background (one-time, ~1-2 GB). Lexical mode until ready — check with /laya:status';
   else if (bg.action === 'setup-running') msg = `laya ▸ setup still running (${bg.step || '…'}) — lexical mode meanwhile`;
@@ -28,14 +32,44 @@ async function sessionStart(inp) {
   return out;
 }
 
+const CONFIRM_TTL = 5 * 60 * 1000;
+
 async function userPrompt(inp) {
-  const st = state.get();
-  const d = await decide({ prompt: inp.prompt || '', cwd: inp.cwd, sessionId: inp.session_id, agent: inp.agent || 'claude-code' });
+  const st = state.get(), sid = inp.session_id, prompt = inp.prompt || '';
+  const sess = state.getSession(sid);
+  // a prompt held by confirm mode and sent again runs with exactly the plan the user saw (no re-decide, no drift)
+  const held = sess.pending && sess.pending.hash === sha(prompt, 12) && Date.now() - sess.pending.ts < CONFIRM_TTL ? sess.pending.decision : null;
+  if (sess.pending) state.setSession(sid, { pending: null, ...(held ? { lastDecision: sess.pending.last } : {}) });
+  const d = held || await decide({ prompt, cwd: inp.cwd, sessionId: sid, agent: inp.agent || 'claude-code', transcript: inp.transcript_path });
   const out = {};
+  const live = !d.skipped && st.mode === 'on';
+
+  // exclusive=hard: remember what this turn may load, the PreToolUse hook enforces it
+  if (!d.skipped) state.setSession(sid, { allowSkills: live && st.exclusive === 'hard' && d.picks.skills.length ? d.picks.skills.map((p) => p.id) : null });
+
+  const wantsHold = st.confirm && !held && live && (!inp.agent || inp.agent === 'claude-code') && (d.model || d.picks.skills.length || d.picks.agents.length || d.picks.mcp.length);
+  if (wantsHold) {
+    // park the decision and un-arm the follow-up gate, so an edited resend is decided afresh instead of skipped
+    state.setSession(sid, { pending: { hash: sha(prompt, 12), ts: Date.now(), decision: d, last: state.getSession(sid).lastDecision }, lastDecision: null });
+    return { decision: 'block', reason: `${emit.message(d, { ...st, verbose: 'normal' })}\n\nHeld for your OK. Send the same prompt again to run it with this plan.\nChange it first: /laya:pin <item> · /laya:ban <item> · /laya:models force <alias> · /laya:loadout confirm off` };
+  }
+
   const msg = emit.message(d, st);
-  if (msg) out.systemMessage = msg;
-  if (!d.skipped && st.mode === 'on') out.hookSpecificOutput = { hookEventName: 'UserPromptSubmit', additionalContext: emit.context(d) };
+  if (msg) out.systemMessage = held ? msg.replace('plan ·', 'confirmed ·') : msg;
+  if (live) out.hookSpecificOutput = { hookEventName: 'UserPromptSubmit', additionalContext: emit.context(d, st) };
   return out;
+}
+
+// exclusive=hard: refuse Skill calls outside the set Laya selected for this turn (fail-open on any doubt)
+async function preTool(inp) {
+  const st = state.get();
+  if (st.exclusive !== 'hard' || inp.tool_name !== 'Skill') return {};
+  const s = state.getSession(inp.session_id);
+  if (!s.allowSkills || !s.allowSkills.length) return {};
+  const want = inp.tool_input && (inp.tool_input.skill || inp.tool_input.name);
+  if (loadout.allowed(want, s.allowSkills)) return {};
+  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny',
+    permissionDecisionReason: `laya: exclusive mode. This turn is limited to ${s.allowSkills.map((i) => i.replace(/^skill:/, '')).join(', ')}. Use those, or ask the user to name "${want}" / run /laya:loadout exclusive soft.` } };
 }
 
 // tool name -> ledger item id
@@ -115,13 +149,13 @@ async function stop(inp) {
   const wins = s.used.filter((u) => !s.failedItems.includes(u)).slice(0, 8);
   for (const w of wins) memory.record(w, 'win', '', { cwd: inp.cwd });
   appendLine(P.decisions, JSON.stringify({ type: 'outcome', decision_id: s.lastDecision.id, ts: new Date().toISOString(), used: s.used, picked_used: hit, picked_ignored: ignored, failed: s.failedItems, tools: s.tools }));
-  state.setSession(sid, { used: [], failedItems: [], tools: 0, fails: 0 });
+  state.setSession(sid, { used: [], failedItems: [], tools: 0, fails: 0, allowSkills: null });
   const st = state.get();
   if (st.verbose === 'full') return { systemMessage: `laya ▸ turn done: used ${hit.length}/${picks.length} picks${s.failedItems.length ? ` · failed: ${s.failedItems.join(', ')}` : ''}${wins.length ? ` · +${wins.length} win(s) in laya.md` : ''}` };
   return {};
 }
 
-const MAP = { 'session-start': sessionStart, prompt: userPrompt, 'post-tool': postTool, 'tool-failure': toolFailure, stop };
+const MAP = { 'session-start': sessionStart, prompt: userPrompt, 'pre-tool': preTool, 'post-tool': postTool, 'tool-failure': toolFailure, stop };
 
 async function run(event, agent) {
   let out = {};

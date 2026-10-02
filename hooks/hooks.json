@@ -6,6 +6,10 @@
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook prompt", "timeout": 10 } ] }
     ],
+    "PreToolUse": [
+      { "matcher": "Skill",
+        "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook pre-tool", "timeout": 5 } ] }
+    ],
     "PostToolUse": [
       { "matcher": "mcp__.*|Skill|Task|Agent|Bash|Edit|Write|WebFetch|WebSearch",
         "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook post-tool", "timeout": 10 } ] }

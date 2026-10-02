@@ -34,6 +34,8 @@ async function stack(argv) {
   else {
     L.push(`LAYA STACK  (${d.ts.replace('T', ' ').slice(0, 19)} · ${d.engine.mode}${d.engine.device ? '·' + d.engine.device : ''} · ${d.engine.latency_ms}ms${d.engine.fallback_reason ? ' · ' + d.engine.fallback_reason : ''})`);
     L.push(`task     ${d.task.domain} · difficulty ${d.task.difficulty}/4 · model-hint ${d.model_hint.tier}/${d.model_hint.effort} · swarm ${d.swarm.use ? d.swarm.topology : 'no'}`);
+    if (d.model) L.push(`model    ${d.model.alias}${d.model.effort ? '/' + d.model.effort : ''}${d.model.forced ? ' [forced]' : ''} · now ${d.model.current || 'unknown'} · apply ${d.model.apply} · ${d.model.reason}`);
+    if (d.loadout && d.picks.skills.length) L.push(`loadout  exclusive ${d.loadout.exclusive} · inlined ${d.loadout.inline.map((s) => s.name).join(', ') || 'none'} (${d.loadout.inline_tokens}/${d.loadout.budget} tok)${d.loadout.deferred.length ? ' · via Skill tool: ' + d.loadout.deferred.map((s) => s.name).join(', ') : ''}`);
     for (const [k, v] of [['skills', d.picks.skills], ['agents', d.picks.agents], ['mcp', d.picks.mcp], ['plugins', d.picks.plugins]]) L.push(`${k.padEnd(8)} ${fmtPicks(v)}`);
     if (d.install_queue.length) L.push(`install+ ${d.install_queue.map((q) => `${q.install || q.id} [${q.trust}]`).join(' · ')}   → /laya:install`);
     if (d.avoid.length) L.push(`avoid    ${d.avoid.map((a) => `${a.id}${a.banned ? ' (banned)' : ''} — ${a.reason}`).join(' · ')}`);
@@ -151,11 +153,30 @@ const COMMANDS = {
   models: (a) => {
     const M = require('./models'), st = state.get(), [sub, v] = a;
     if (sub === 'policy' && ['save', 'balanced', 'quality'].includes(v)) { state.set({ model_policy: v }); return print(`model policy → ${v}`); }
-    if (sub === 'apply' && ['hint', 'auto'].includes(v)) { state.set({ model_apply: v }); return print(`model apply → ${v}${v === 'auto' ? ' (Claude will switch model/effort itself where session tools exist)' : ''}`); }
+    if (sub === 'apply' && ['hint', 'auto', 'delegate'].includes(v)) {
+      state.set({ model_apply: v });
+      return print(`model apply → ${v}${v === 'auto' ? ' (Claude will switch model/effort itself where session tools exist)' : v === 'delegate' ? ' (when the pick differs from the running model, the work runs through the Agent tool with model=<pick>)' : ' (Laya suggests /model + /effort)'}`);
+    }
+    if (sub === 'force') {
+      if (!v || v === 'off') { state.set({ model_force: null }); return print('model force → off (Laya routes by task again)'); }
+      if (!M.registry().some((m) => m.alias === v)) return print(`unknown model "${v}". Known: ${M.registry().map((m) => m.alias).join(', ')}`);
+      state.set({ model_force: v }); return print(`model force → ${v} (every prompt, until /laya:models force off)`);
+    }
     if (sub === 'current') { state.set({ current_model: v && v !== 'none' ? v : null }); return print(`current model → ${v}`); }
-    print(`policy ${st.model_policy} · apply ${st.model_apply} · current ${st.current_model || 'unknown'}   (edit ~/.laya/models.json to change tiers/costs)\n` +
+    print(`policy ${st.model_policy} · apply ${st.model_apply} · force ${st.model_force || 'off'} · current ${st.current_model || 'auto-detected from the session'}   (edit ~/.laya/models.json to change tiers/costs)\n` +
       M.registry().map((m) => `${m.alias.padEnd(8)} tier ${m.tier}  cost ${m.cost}  efforts ${m.efforts.join('/') || 'n/a'}  ${m.id}  — ${m.note || ''}`).join('\n') +
-      `\nusage: models policy save|balanced|quality · models apply hint|auto · models current <alias>`);
+      `\nusage: models policy save|balanced|quality · models apply hint|auto|delegate · models force <alias|off> · models current <alias|none>`);
+  },
+  loadout: (a) => {
+    const [sub, v] = a, st = state.get();
+    const num = (x, lo, hi) => { const n = Number(x); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : null; };
+    if (sub === 'exclusive' && ['off', 'soft', 'hard'].includes(v)) { state.set({ exclusive: v }); return print(`exclusive → ${v}${v === 'hard' ? ' (Skill calls outside the selected set are blocked for that turn)' : v === 'soft' ? ' (Claude is told to use only the selected skills)' : ''}`); }
+    if (sub === 'inline' && ['on', 'off'].includes(v)) { state.set({ skills_inline: v === 'on' }); return print(`inline → ${v}${v === 'on' ? ' (selected SKILL.md text is injected with the prompt)' : ' (names only; Claude loads skills itself)'}`); }
+    if (sub === 'max' && num(v, 1, 8)) { state.set({ max_skills: num(v, 1, 8) }); return print(`max skills per prompt → ${num(v, 1, 8)}`); }
+    if (sub === 'budget' && num(v, 200, 12000)) { state.set({ skill_budget: num(v, 200, 12000) }); return print(`inline budget → ${num(v, 200, 12000)} tokens (skills that do not fit whole are loaded via the Skill tool instead)`); }
+    if (sub === 'confirm' && ['on', 'off'].includes(v)) { state.set({ confirm: v === 'on' }); return print(`confirm → ${v}${v === 'on' ? ' (Laya shows the plan and holds the prompt; send it again to run it)' : ''}`); }
+    print(`exclusive ${st.exclusive} · inline ${st.skills_inline ? 'on' : 'off'} · max ${st.max_skills} skills · budget ${st.skill_budget} tok · confirm ${st.confirm ? 'on' : 'off'}\n` +
+      'usage: loadout exclusive off|soft|hard · loadout inline on|off · loadout max <1-8> · loadout budget <tokens> · loadout confirm on|off');
   },
   mode: (a) => { const v = a[0]; if (!['on', 'shadow', 'off'].includes(v)) return print(`mode=${state.get().mode} (on|shadow|off)`); state.set({ mode: v }); print(`laya mode → ${v}`); },
   verbose: (a) => { const v = a[0]; if (!['quiet', 'normal', 'full'].includes(v)) return print(`verbose=${state.get().verbose} (quiet|normal|full)`); state.set({ verbose: v }); print(`laya verbosity → ${v}`); },

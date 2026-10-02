@@ -8,6 +8,7 @@ const features = require('./features');
 const memory = require('./memory');
 const state = require('./state');
 const models = require('./models');
+const loadout = require('./loadout');
 const setup = require('./setup');
 const { P, redact, tokenize, appendLine, log, trunc } = require('./util');
 const fs = require('fs');
@@ -65,7 +66,7 @@ function blend({ cands, lexMap, daemon, mem, tau }) {
   return out;
 }
 
-async function decide({ prompt, cwd, sessionId, agent = 'claude-code' }) {
+async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcript = null }) {
   const t0 = Date.now();
   const st = state.get();
   const sess = state.getSession(sessionId);
@@ -130,10 +131,19 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code' }) {
     return scored.filter((s) => s.kind === kind && !s.banned && s.it.installed === installed && (s.pinned || s.score >= tau))
       .sort((a, b) => b.score - a.score)
       .filter((s) => { const k = s.it.desc.slice(0, 80).toLowerCase(); if (k.length > 30 && seenDesc.has(k)) return false; seenDesc.add(k); return true; })
-      .slice(0, LIMIT[kind]);
+      .slice(0, kind === 'skill' ? Math.max(1, Math.min(8, st.max_skills || LIMIT.skill)) : LIMIT[kind]);
   };
   const row = (s) => ({ id: s.it.id, name: s.it.name, score: +s.score.toFixed(3), lex: +s.lex.toFixed(3), laya_p: s.p != null ? +s.p.toFixed(3) : null, emb: s.emb != null ? +s.emb.toFixed(3) : null, tok: s.it.tok, installed: s.it.installed, pinned: !!s.pinned });
   const picks = { skills: pick('skill', true).map(row), agents: pick('agent', true).map(row), mcp: pick('mcp', true).map(row), plugins: pick('plugin', true).map(row), commands: pick('command', true).map(row) };
+
+  // skills the user named outright ("use the pdf skill") are always selected, ahead of any ranking
+  const named = loadout.mentioned(prompt, items).filter((it) => !memory.adjust(mem, it.id).banned);
+  for (const it of named.reverse()) {
+    const have = picks.skills.find((p) => p.id === it.id);
+    if (have) { have.mentioned = true; picks.skills.splice(picks.skills.indexOf(have), 1); picks.skills.unshift(have); }
+    else picks.skills.unshift({ id: it.id, name: it.name, score: 1, lex: 1, laya_p: null, emb: null, tok: it.tok, installed: true, pinned: true, mentioned: true });
+  }
+  picks.skills = picks.skills.slice(0, Math.max(Math.min(8, st.max_skills || LIMIT.skill), named.length));
 
   const haveInstalled = picks.skills.length + picks.agents.length > 0;
   const wantInstall = f.flags.needs_install || f.flags.needs_research && !haveInstalled || (!haveInstalled && f.domain !== 'chat' && f.difficulty >= 3);
@@ -143,7 +153,10 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code' }) {
   const avoid = scored.filter((s) => s.banned || (s.adj && s.adj.penalty >= 0.15 && s.lex > 0.2))
     .sort((a, b) => b.lex - a.lex).slice(0, 3).map((s) => ({ id: s.it.id, reason: s.why || (s.adj && s.adj.why) || 'laya.md', banned: !!s.banned }));
 
-  const model = models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem });
+  const model = models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem, force: st.model_force });
+  const current = st.current_model || models.detectCurrent(transcript) || models.idToAlias(sess.model) || null;
+  const lo = { exclusive: st.exclusive, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
+  lo.inline = lo.inline.map(({ id, name, tok }) => ({ id, name, tok })); // bodies are re-read at injection time, never stored
   const tier = f.difficulty >= 4 || f.flags.sensitive ? { tier: 'deep', effort: 'high' } : f.difficulty <= 1 ? { tier: 'fast', effort: 'low' } : { tier: 'balanced', effort: 'med' };
   const swarm = { use: f.flags.multi_file && f.difficulty >= 4, topology: 'hierarchical', agents: picks.agents.map((a) => a.id) };
 
@@ -151,7 +164,8 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code' }) {
     ...base,
     engine: { mode, checkpoint: 'english', latency_ms: Date.now() - t0, device: daemon ? daemon.device : null, daemon_ms: daemon ? daemon.ms : null, fallback_reason: mode === 'lexical' ? why : '', registry_items: items.length, min_confidence: tau },
     task: { domain: f.domain, difficulty: f.difficulty, ...f.flags, confidence: f.domain_p, source: f.source, lang: 'en' },
-    picks, swarm, install_queue: queue, avoid, model_hint: tier, model: model ? { ...model, apply: st.model_apply, current: st.current_model } : null,
+    picks, swarm, install_queue: queue, avoid, model_hint: tier, model: model ? { ...model, apply: st.model_apply, current, switch: !!(current && current !== model.alias) } : null,
+    loadout: lo,
     history_applied: {
       penalties: scored.filter((s) => s.adj && s.adj.penalty > 0 && picks.skills.concat(picks.agents, picks.mcp).some((p) => p.id === s.it.id)).map((s) => s.it.id),
       boosts: scored.filter((s) => s.adj && s.adj.boost > 0).slice(0, 5).map((s) => s.it.id),
