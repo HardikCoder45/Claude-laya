@@ -1,0 +1,27 @@
+{
+  "note": "Golden prompts for the lexical floor. Each expects the named skill/agent in the top picks. Add rows when Laya picks wrong; run: node tests/selfcheck.js",
+  "fixture": {
+    "skills": {
+      "ui-ux-pro-max": "UI/UX design intelligence: landing page, dashboard, color palette, typography, glassmorphism, responsive layout, accessibility",
+      "deploy-to-vercel": "Deploy applications and websites to Vercel. Use for deploy my app, push live, preview deployment",
+      "supabase-postgres": "Postgres performance and schema best practices: sql queries, migrations, indexes, row level security",
+      "security-reviewer": "Security review: vulnerabilities, authentication, injection, secrets, audit pull request code for security issues",
+      "pdf": "Read, create and edit PDF documents, extract text and tables from pdf files",
+      "tdd": "Test driven development: write failing tests first, red green refactor, unit tests"
+    },
+    "agents": {
+      "backend-developer": "Build server side APIs, microservices and backend systems",
+      "ui-designer": "Design visual interfaces, design systems and component libraries"
+    },
+    "catalog": { "stripe": "Stripe payments billing subscriptions invoices checkout integration" }
+  },
+  "cases": [
+    { "prompt": "make my landing page look premium with a better color palette", "expect": ["skill:ui-ux-pro-max"] },
+    { "prompt": "deploy this next.js app live on vercel", "expect": ["skill:deploy-to-vercel"] },
+    { "prompt": "my postgres migration is slow, add an index and check the sql", "expect": ["skill:supabase-postgres"] },
+    { "prompt": "audit this pull request for security vulnerabilities and secrets", "expect": ["skill:security-reviewer"] },
+    { "prompt": "extract the tables from this pdf report", "expect": ["skill:pdf"] },
+    { "prompt": "write unit tests first then implement the parser", "expect": ["skill:tdd"] },
+    { "prompt": "build a rest api microservice for orders", "expect": ["agent:backend-developer"] }
+  ]
+}

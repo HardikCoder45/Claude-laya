@@ -1,0 +1,232 @@
+{
+  "schema": "laya.decision/1",
+  "id": "f0393a88-81eb-49bc-9868-9b16d6d1ea9a",
+  "ts": "2026-10-02T09:43:50.727Z",
+  "agent": "claude-code",
+  "cwd": "/path/to/project",
+  "session": "session-id",
+  "prompt_hash": "27bd10c7bced",
+  "engine": {
+    "mode": "laya",
+    "checkpoint": "english",
+    "latency_ms": 959,
+    "device": "mps",
+    "daemon_ms": 947,
+    "fallback_reason": "",
+    "registry_items": 567,
+    "min_confidence": 0.35
+  },
+  "task": {
+    "domain": "frontend_ui",
+    "difficulty": 3,
+    "needs_research": true,
+    "needs_install": true,
+    "multi_file": false,
+    "sensitive": false,
+    "needs_tools": true,
+    "confidence": 0.3069,
+    "source": "laya",
+    "lang": "en"
+  },
+  "picks": {
+    "skills": [
+      {
+        "id": "skill:cli-hub-meta-skill",
+        "name": "cli-hub-meta-skill",
+        "score": 0.494,
+        "lex": 0,
+        "laya_p": 0.283,
+        "emb": 0.948,
+        "tok": 41,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "skill:fullstack-dev-skills:monitoring-expert",
+        "name": "fullstack-dev-skills:monitoring-expert",
+        "score": 0.396,
+        "lex": 0.315,
+        "laya_p": 0.189,
+        "emb": 0.898,
+        "tok": 75,
+        "installed": true,
+        "pinned": false
+      }
+    ],
+    "agents": [
+      {
+        "id": "agent:UI-UX-DESIGNER",
+        "name": "UI-UX-DESIGNER",
+        "score": 0.431,
+        "lex": 0,
+        "laya_p": 0.392,
+        "emb": 0.922,
+        "tok": 19,
+        "installed": true,
+        "pinned": false
+      }
+    ],
+    "mcp": [],
+    "plugins": [],
+    "commands": []
+  },
+  "swarm": {
+    "use": false,
+    "topology": "hierarchical",
+    "agents": [
+      "agent:UI-UX-DESIGNER"
+    ]
+  },
+  "install_queue": [],
+  "avoid": [],
+  "model_hint": {
+    "tier": "balanced",
+    "effort": "med"
+  },
+  "history_applied": {
+    "penalties": [],
+    "boosts": [],
+    "pins": [],
+    "bans": []
+  },
+  "explain": {
+    "top_k": [
+      {
+        "id": "skill:cli-hub-meta-skill",
+        "name": "cli-hub-meta-skill",
+        "score": 0.494,
+        "lex": 0,
+        "laya_p": 0.283,
+        "emb": 0.948,
+        "tok": 41,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "agent:UI-UX-DESIGNER",
+        "name": "UI-UX-DESIGNER",
+        "score": 0.431,
+        "lex": 0,
+        "laya_p": 0.392,
+        "emb": 0.922,
+        "tok": 19,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "skill:fullstack-dev-skills:monitoring-expert",
+        "name": "fullstack-dev-skills:monitoring-expert",
+        "score": 0.396,
+        "lex": 0.315,
+        "laya_p": 0.189,
+        "emb": 0.898,
+        "tok": 75,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "skill:fullstack-dev-skills:laravel-specialist",
+        "name": "fullstack-dev-skills:laravel-specialist",
+        "score": 0.331,
+        "lex": 0.204,
+        "laya_p": 0.169,
+        "emb": 0.892,
+        "tok": 75,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "skill:fullstack-dev-skills:rag-architect",
+        "name": "fullstack-dev-skills:rag-architect",
+        "score": 0.313,
+        "lex": 0.202,
+        "laya_p": 0.062,
+        "emb": 0.927,
+        "tok": 74,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "agent:quorum-manager",
+        "name": "quorum-manager",
+        "score": 0.282,
+        "lex": 0,
+        "laya_p": 0.049,
+        "emb": 0.941,
+        "tok": 23,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "plugin:spotify-ads-api",
+        "name": "spotify-ads-api",
+        "score": 0.275,
+        "lex": 0.311,
+        "laya_p": 0.004,
+        "emb": 0.893,
+        "tok": 1059,
+        "installed": false,
+        "pinned": false
+      },
+      {
+        "id": "plugin:airwallex-agentos",
+        "name": "airwallex-agentos",
+        "score": 0.252,
+        "lex": 0.285,
+        "laya_p": 0.003,
+        "emb": 0.896,
+        "tok": 995,
+        "installed": false,
+        "pinned": false
+      }
+    ],
+    "rejected": [
+      {
+        "id": "skill:fullstack-dev-skills:laravel-specialist",
+        "name": "fullstack-dev-skills:laravel-specialist",
+        "score": 0.331,
+        "lex": 0.204,
+        "laya_p": 0.169,
+        "emb": 0.892,
+        "tok": 75,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "skill:fullstack-dev-skills:rag-architect",
+        "name": "fullstack-dev-skills:rag-architect",
+        "score": 0.313,
+        "lex": 0.202,
+        "laya_p": 0.062,
+        "emb": 0.927,
+        "tok": 74,
+        "installed": true,
+        "pinned": false
+      },
+      {
+        "id": "agent:quorum-manager",
+        "name": "quorum-manager",
+        "score": 0.282,
+        "lex": 0,
+        "laya_p": 0.049,
+        "emb": 0.941,
+        "tok": 23,
+        "installed": true,
+        "pinned": false
+      }
+    ]
+  },
+  "auto_laya": {
+    "enabled": false,
+    "redecide_on": [
+      "tool_fail_x2",
+      "every_12_tools",
+      "ctx>60%"
+    ]
+  },
+  "context_budget": {
+    "max": 300
+  },
+  "outcome": null,
+  "prompt": "research and install the best plugins for building a saas billing dashboard"
+}

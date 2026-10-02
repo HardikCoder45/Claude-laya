@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "laya.decision/1",
+  "title": "Laya decision",
+  "description": "One per-prompt decision: what Laya chose, why, and what it learned from. Written to ~/.laya/decisions.jsonl and (compactly) injected as <laya-decision>.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "ts",
+    "engine",
+    "task",
+    "picks",
+    "install_queue",
+    "avoid",
+    "model_hint",
+    "explain"
+  ],
+  "properties": {
+    "schema": {
+      "const": "laya.decision/1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent": {
+      "enum": [
+        "claude-code",
+        "codex",
+        "gemini",
+        "cursor",
+        "mcp"
+      ]
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prompt_hash": {
+      "type": "string"
+    },
+    "skipped": {
+      "type": "string",
+      "description": "present when no decision was made: slash-command | trivial | followup | empty | off"
+    },
+    "engine": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "laya",
+            "lexical",
+            "skipped"
+          ]
+        },
+        "checkpoint": {
+          "type": "string"
+        },
+        "latency_ms": {
+          "type": "integer"
+        },
+        "device": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daemon_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fallback_reason": {
+          "type": "string"
+        },
+        "registry_items": {
+          "type": "integer"
+        },
+        "min_confidence": {
+          "type": "number"
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "enum": [
+            "code",
+            "frontend_ui",
+            "data_db",
+            "devops_infra",
+            "security",
+            "research",
+            "writing_docs",
+            "media_3d_video",
+            "office_files",
+            "agents_meta",
+            "chat"
+          ]
+        },
+        "difficulty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "needs_research": {
+          "type": "boolean"
+        },
+        "needs_install": {
+          "type": "boolean"
+        },
+        "multi_file": {
+          "type": "boolean"
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "needs_tools": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source": {
+          "enum": [
+            "laya",
+            "heuristic"
+          ]
+        },
+        "lang": {
+          "type": "string"
+        }
+      }
+    },
+    "picks": {
+      "type": "object",
+      "properties": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        },
+        "mcp": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        }
+      }
+    },
+    "swarm": {
+      "type": "object",
+      "properties": {
+        "use": {
+          "type": "boolean"
+        },
+        "topology": {
+          "enum": [
+            "hierarchical",
+            "mesh",
+            "ring",
+            "star"
+          ]
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "install_queue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "install": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "trust": {
+            "enum": [
+              "high",
+              "med",
+              "low"
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "tok": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "avoid": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "banned": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "model_hint": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ]
+        },
+        "effort": {
+          "enum": [
+            "low",
+            "med",
+            "high"
+          ]
+        }
+      }
+    },
+    "history_applied": {
+      "type": "object",
+      "description": "what laya.md changed",
+      "properties": {
+        "penalties": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "boosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bans": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "explain": {
+      "type": "object",
+      "properties": {
+        "top_k": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pick"
+          }
+        }
+      }
+    },
+    "auto_laya": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "redecide_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "context_budget": {
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": "integer"
+        }
+      }
+    },
+    "outcome": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "filled by the Stop hook as a separate {type:'outcome'} line: used / picked_used / picked_ignored / failed"
+    },
+    "model": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Model + effort routing from engine/models.js (relative costs, editable in ~/.laya/models.json)",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "effort": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            null
+          ]
+        },
+        "tier": {
+          "type": "integer"
+        },
+        "rel_cost": {
+          "type": "number"
+        },
+        "savings_pct": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "delegate": {
+          "type": "object",
+          "properties": {
+            "trivial": {
+              "type": "string"
+            },
+            "review": {
+              "type": "string"
+            }
+          }
+        },
+        "apply": {
+          "enum": [
+            "hint",
+            "auto"
+          ]
+        },
+        "current": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pick": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "score"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "kind:name, e.g. skill:ui-ux-pro-max"
+        },
+        "name": {
+          "type": "string"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.6
+        },
+        "lex": {
+          "type": "number"
+        },
+        "laya_p": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Laya's probability for this option (null in lexical mode)"
+        },
+        "emb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tok": {
+          "type": "integer",
+          "description": "estimated always-on token cost"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

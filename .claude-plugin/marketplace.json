@@ -1,0 +1,24 @@
+{
+  "name": "laya-marketplace",
+  "owner": {
+    "name": "Hardik Arora"
+  },
+  "plugins": [
+    {
+      "name": "laya",
+      "source": "./",
+      "description": "Laya picks the best skills, agents, MCP servers and plugins before every prompt, auto-installs better ones, and learns from failures (laya.md).",
+      "version": "1.0.0",
+      "license": "MIT",
+      "keywords": [
+        "router",
+        "skills",
+        "agents",
+        "mcp",
+        "plugins",
+        "meta"
+      ]
+    }
+  ],
+  "description": "Laya: the meta-plugin that chooses, installs and learns your Claude Code stack."
+}

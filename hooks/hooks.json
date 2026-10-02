@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook session-start", "timeout": 20 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook prompt", "timeout": 10 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "mcp__.*|Skill|Task|Agent|Bash|Edit|Write|WebFetch|WebSearch",
+        "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook post-tool", "timeout": 10 } ] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook tool-failure", "timeout": 10 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js\" hook stop", "timeout": 10 } ] }
+    ]
+  }
+}

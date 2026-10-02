@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "laya": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/laya-conductor.js", "mcp"]
+    }
+  }
+}
