@@ -52,7 +52,8 @@ function detectCurrent(transcriptPath, reg = registry()) {
       if (!lines[i].includes('"model"')) continue;
       try {
         const j = JSON.parse(lines[i]);
-        const m = (j.message && j.message.model) || j.model;
+        // newest of: Claude Code's model attachment (written per prompt, follows /model) or the last reply's model
+        const m = (j.attachment && j.attachment.type === 'model' && j.attachment.identity && j.attachment.identity.modelId) || (j.message && j.message.model) || j.model;
         if (m && m !== '<synthetic>') return idToAlias(m, reg) || String(m);
       } catch { /* partial first line of the tail */ }
     }
@@ -90,4 +91,38 @@ function choose(task, { policy = 'balanced', mem = null, force = null } = {}) {
   };
 }
 
-module.exports = { choose, registry, idToAlias, detectCurrent, DEFAULTS, EFFORTS };
+// The session's configured model when nothing else says (first prompt of a session): env, then settings files.
+function configured(cwd) {
+  const env = process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL;
+  if (env) return idToAlias(env);
+  for (const f of [cwd && path.join(cwd, '.claude', 'settings.local.json'), cwd && path.join(cwd, '.claude', 'settings.json'), path.join(P.claude, 'settings.json')].filter(Boolean)) {
+    const j = readJson(f, null);
+    if (j && j.model) return idToAlias(j.model);
+  }
+  return null;
+}
+
+// up: planned is stronger than current | down: cheaper | same | unknown
+function direction(planned, current, reg = registry()) {
+  if (!current) return 'unknown';
+  if (planned === current) return 'same';
+  const a = reg.find((m) => m.alias === planned), b = reg.find((m) => m.alias === current);
+  if (!a || !b) return 'unknown';
+  return a.tier > b.tier || (a.tier === b.tier && a.cost > b.cost) ? 'up' : 'down';
+}
+
+// How the pick is applied this turn. Hooks cannot change the session model and skill `model:` frontmatter does not
+// change the model that answers, but an Agent call with model=<alias> really runs on that model: that is the lever.
+//   delegate: main work runs in Agent(model) | offload: cheaper model takes self-contained chunks | direct: answer as is
+//   check: current model unknown, Claude compares with its own identity | hint: only suggest /model | same: nothing to do
+const AGENT_MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable']);
+function applyPlan(apply, dir, difficulty, alias) {
+  if (dir === 'same') return 'same';
+  if (apply === 'hint' || !AGENT_MODELS.has(alias)) return 'hint';
+  if (dir === 'unknown') return difficulty >= 2 ? 'check' : 'direct';
+  if (apply === 'delegate') return difficulty >= 2 ? 'delegate' : 'direct';
+  if (dir === 'up') return difficulty >= 2 ? 'delegate' : 'direct';
+  return difficulty >= 3 ? 'offload' : 'direct';
+}
+
+module.exports = { choose, registry, idToAlias, detectCurrent, configured, direction, applyPlan, DEFAULTS, EFFORTS };

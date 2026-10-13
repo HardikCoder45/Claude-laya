@@ -88,7 +88,16 @@ const SYN = {
   llm: 'ai model agent prompt', agent: 'swarm orchestration', swarm: 'agent orchestration coordination', ppt: 'slides presentation', slides: 'presentation deck',
   video: 'animation render motion', '3d': 'webgl three render', pdf: 'document', sheet: 'spreadsheet xlsx', excel: 'spreadsheet xlsx',
 };
-const stem = (w) => (w.length > 4 ? w.replace(/(ing|ed|es|s|ly)$/, '') : w);
+// light stemmer: both sides of a match must land on the same form (image/images/imaging -> imag)
+const stem = (w) => {
+  if (w.length <= 3 || /\d/.test(w)) return w;
+  let s = w.replace(/ies$/, 'y');
+  if (/(ing|ed)$/.test(s) && s.length > 5) s = s.replace(/(ing|ed)$/, '');
+  else if (/ly$/.test(s) && s.length > 5) s = s.slice(0, -2);
+  else if (/[^s]s$/.test(s)) s = s.slice(0, -1);
+  if (/e$/.test(s) && s.length > 3) s = s.slice(0, -1);
+  return s;
+};
 function tokenize(text, { expand = false } = {}) {
   const raw = String(text ?? '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STOP.has(w));
   const out = [];

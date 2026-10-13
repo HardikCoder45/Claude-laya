@@ -89,15 +89,17 @@ const hook = (event, input) => {
 
   // ---- gate: slash commands skipped, follow-ups reuse the stack
   assert.strictEqual((await decide({ prompt: '/laya:stack', cwd, sessionId: 'x' })).skipped, 'slash-command');
+  assert.strictEqual((await decide({ prompt: '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<summary>Agent "design the database" finished</summary>', cwd, sessionId: 'x' })).skipped, 'system-event');
+  assert.strictEqual((await decide({ prompt: '[SYSTEM NOTIFICATION - NOT USER INPUT] background task done', cwd, sessionId: 'x' })).skipped, 'system-event');
   await decide({ prompt: 'deploy this next.js app live on vercel', cwd, sessionId: 'f1' });
   assert.strictEqual((await decide({ prompt: 'deploy this next.js app live on vercel please', cwd, sessionId: 'f1' })).skipped, 'followup');
-  ok('gate: slash commands + follow-ups skipped');
+  ok('gate: slash commands, system events (task notifications) + follow-ups skipped');
 
   // ---- hooks: visible message + context, failure learning, outcome
   const out = hook('prompt', { session_id: 'h1', cwd, prompt: 'audit this pull request for security vulnerabilities and secrets' });
   assert(/^laya ▸/.test(out.systemMessage), out.systemMessage);
   assert(/<laya-decision v1>/.test(out.hookSpecificOutput.additionalContext) && out.hookSpecificOutput.hookEventName === 'UserPromptSubmit');
-  assert(out.hookSpecificOutput.additionalContext.length < 1600, 'context stays compact');
+  assert(out.hookSpecificOutput.additionalContext.length < 1600, `context stays compact (${out.hookSpecificOutput.additionalContext.length}):\n${out.hookSpecificOutput.additionalContext}`);
   const fail = hook('tool-failure', { session_id: 'h1', cwd, tool_name: 'mcp__broken_srv__query', tool_input: {}, error: 'connect ECONNREFUSED Bearer abcdefghijklmnopqrstuvwxyz' });
   assert(/recorded failure/.test(fail.systemMessage));
   const md = fs.readFileSync(util.P.md, 'utf8');
@@ -247,7 +249,7 @@ const hook = (event, input) => {
   assert.notStrictEqual(M.choose({ difficulty: 4, sensitive: true, multi_file: true, domain: 'code' }, { mem: memory.load(cwd) }).alias, 'opus');
   memory.setVerdict('model:opus', 'ok', 'cleared', { cwd });
   const dm = await decide({ prompt: 'deploy this next.js app live on vercel now', cwd, sessionId: 'mdl' });
-  assert(dm.model && dm.model.alias && /\n  model +\w+/.test(require('../engine/emit').message(dm, state.get())) && /model plan/.test(require('../engine/emit').context(dm)));
+  assert(dm.model && dm.model.alias && /\n  model +\w+/.test(require('../engine/emit').message(dm, state.get())) && /model: \w+/.test(require('../engine/emit').context(dm)));
   ok('model routing: cheapest capable model + effort, bans honoured, shown in message/context');
 
   // ---- model: live detection from the transcript, force, pin, delegate
@@ -261,10 +263,26 @@ const hook = (event, input) => {
   assert.strictEqual(M.choose({ difficulty: 1, sensitive: false, multi_file: false, domain: 'chat' }, { mem: memory.load(cwd) }).alias, 'fable');
   memory.setVerdict('model:fable', 'ok', 'cleared', { cwd });
   state.set({ model_apply: 'delegate' });
-  const dd = await decide({ prompt: 'write a haiku about caching and format it nicely', cwd, sessionId: 'del', transcript: tr });
+  const dd = await decide({ prompt: 'draft a short blog story about caching layers and the tradeoffs between write-through and write-back', cwd, sessionId: 'del', transcript: tr });
   assert.strictEqual(dd.model.current, 'opus');
   const dctx = require('../engine/emit').context(dd);
-  assert(dd.model.alias !== 'opus' && dd.model.switch && /Agent tool with model="haiku"/.test(dctx) && /work runs via Agent/.test(require('../engine/emit').message(dd, state.get())), dctx);
+  assert(dd.model.alias !== 'opus' && dd.model.switch && dd.model.plan === 'delegate' && new RegExp(`Agent tool with model: "${dd.model.alias}"`).test(dctx) && /via Agent\(model=/.test(require('../engine/emit').message(dd, state.get())), dctx);
+  // auto (default): a stronger pick delegates the work, a cheaper pick on a small task is answered directly, unknown -> Claude checks
+  const Em = require('../engine/emit');
+  state.set({ model_apply: 'auto' });
+  assert.strictEqual(M.applyPlan('auto', 'up', 3, 'opus'), 'delegate');
+  assert.strictEqual(M.applyPlan('auto', 'down', 1, 'haiku'), 'direct');
+  assert.strictEqual(M.applyPlan('auto', 'down', 3, 'sonnet'), 'offload');
+  assert.strictEqual(M.applyPlan('auto', 'unknown', 3, 'opus'), 'check');
+  assert.strictEqual(M.applyPlan('hint', 'up', 4, 'opus'), 'hint');
+  assert.strictEqual(M.direction('opus', 'haiku'), 'up'); assert.strictEqual(M.direction('haiku', 'opus'), 'down'); assert.strictEqual(M.direction('opus', null), 'unknown');
+  const trH = path.join(tmp, 'transcript-haiku.jsonl');
+  w(trH, [{ type: 'user', message: { role: 'user', content: 'hi' } }, { type: 'assistant', message: { role: 'assistant', model: 'claude-haiku-4-5-20251001', content: [] } }].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  const up = await decide({ prompt: 'design the architecture and migrate the entire production database schema to a sharded setup across all services from scratch', cwd, sessionId: 'up', transcript: trH });
+  const upCtx = Em.context(up);
+  assert(up.model.current === 'haiku' && up.model.plan === 'delegate' && /MODEL ROUTING — do this BEFORE answering/.test(upCtx) && new RegExp(`model: "${up.model.alias}"`).test(upCtx), upCtx);
+  const unk = await decide({ prompt: 'design the architecture and migrate the entire production database schema to a sharded setup', cwd, sessionId: 'unk' });
+  assert(unk.model.plan === 'check' && /If you are (haiku|sonnet)/.test(Em.context(unk)), Em.context(unk));
   state.set({ model_apply: 'hint', model_force: 'sonnet' });
   assert.strictEqual((await decide({ prompt: 'rename this variable to something clearer please', cwd, sessionId: 'frc' })).model.alias, 'sonnet');
   state.set({ model_force: null });
@@ -378,6 +396,82 @@ const hook = (event, input) => {
   const tr = spawnSync('node', [BIN, 'trace'], { encoding: 'utf8', env: process.env }).stdout;
   assert(/what actually happened/.test(tr) && /supabase/.test(tr), tr);
   ok('turn verification: named MCP/skill ignored -> nudged once; faithful turn credited; trace command');
+  }
+
+  // ---- ground truth from the transcript + nested/synced layouts: names are exactly what the Skill tool accepts
+  {
+    const C = process.env.CLAUDE_CONFIG_DIR;
+    const sk = (dir, fmName, desc) => w(path.join(dir, 'SKILL.md'), `---\nname: ${fmName}\ndescription: ${desc}\n---\nbody of ${fmName}`);
+    sk(path.join(C, 'skills', 'synced', 'bucket1', 'docx'), 'docx', 'Create and edit Word documents (.docx). Do NOT use for PDFs or spreadsheets.');
+    sk(path.join(C, 'skills', 'hook-maker'), 'startup-hook-skill', 'Create SessionStart hooks for cloud sessions');
+    sk(path.join(C, 'plugins', 'synced', 'bucket1', 'mkt', 'skills', 'seo-audit'), 'seo-audit', 'Run an SEO audit: keywords, backlinks, content gaps');
+    w(path.join(C, 'plugins', 'synced', 'bucket1', 'mkt', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'marketing', description: 'marketing plugin' }));
+    const lt = path.join(tmp, 'listing.jsonl');
+    const att = (a) => JSON.stringify({ type: 'attachment', attachment: a });
+    w(lt, [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }),
+      att({ type: 'model', identity: { modelId: 'claude-haiku-4-5-20251001' } }),
+      att({ type: 'skill_listing', content: '- hook-maker (startup-hook-skill): Create SessionStart hooks for cloud sessions\n- anthropic-skills:docx: Create and edit Word documents\n- marketing:seo-audit: Run an SEO audit: keywords, backlinks, content gaps\n- code-review: Review the current diff for correctness bugs' }),
+      att({ type: 'agent_listing_delta', addedTypes: ['general-purpose', 'Explore', 'db-tuner'], addedLines: ['- general-purpose: anything (Tools: *)', '- Explore: search code', '- db-tuner: Tune slow Postgres queries and indexes (Tools: *)'] }),
+      att({ type: 'deferred_tools_delta', addedNames: ['WebFetch', 'mcp__linear__create_issue', 'mcp__linear__list_issues', 'mcp__plugin_laya_laya__laya_decide'] }),
+      att({ type: 'mcp_instructions_delta', addedNames: ['linear'], addedBlocks: ['## linear\nLinear issue tracker: create and search issues, projects and cycles.'] }),
+    ].join('\n') + '\n');
+    const reg = require('../engine/inventory').build(tmp, { transcript: lt });
+    const ids = new Set(reg.items.map((i) => i.id));
+    for (const id of ['skill:anthropic-skills:docx', 'skill:hook-maker', 'skill:marketing:seo-audit', 'skill:code-review', 'agent:db-tuner', 'mcp:linear', 'plugin:marketing']) assert(ids.has(id), `inventory missing ${id}: ${[...ids].join(', ')}`);
+    for (const id of ['skill:docx', 'skill:startup-hook-skill', 'agent:general-purpose', 'agent:Explore', 'mcp:plugin_laya_laya']) assert(!ids.has(id), `inventory should not have ${id}`);
+    const lin = reg.items.find((i) => i.id === 'mcp:linear');
+    assert(lin.toolPrefix === 'mcp__linear__' && lin.tools.includes('create_issue') && /issue tracker/.test(lin.desc));
+    assert(reg.items.find((i) => i.id === 'skill:anthropic-skills:docx').file, 'listed skill keeps its SKILL.md so it can be inlined');
+    assert.strictEqual(M.detectCurrent(lt), 'haiku', 'model attachment is the current model');
+    const L = require('../engine/lexical'), ix = L.index(reg.items);
+    const top = L.rank(ix, 'extract the tables from this pdf file', { filter: (i) => i.kind === 'skill' });
+    assert(!top.length || top[0].item.id !== 'skill:anthropic-skills:docx', '"Do NOT use for PDFs" is not evidence for pdf prompts');
+    for (const f of [path.join(C, 'skills', 'synced'), path.join(C, 'skills', 'hook-maker'), path.join(C, 'plugins', 'synced')]) fs.rmSync(f, { recursive: true, force: true });
+    ok('inventory: transcript listing gives exact skill/agent/MCP names; synced + nested layouts; negated descriptions ignored');
+  }
+
+  // ---- auto-laya: toolbox map at session start, runners-up per prompt, directive re-plans mid-task
+  {
+    require('../engine/inventory').load(cwd, { force: true });
+    state.set({ auto: true });
+    const ss = hook('session-start', { session_id: 'au', cwd });
+    assert(/<laya-toolbox>/.test(ss.hookSpecificOutput.additionalContext) && /security-reviewer/.test(ss.hookSpecificOutput.additionalContext), ss.hookSpecificOutput.additionalContext);
+    const ap = hook('prompt', { session_id: 'au', cwd, prompt: 'audit this pull request for security vulnerabilities and leaked secrets in the auth code' });
+    assert(/<laya-decision v1>/.test(ap.hookSpecificOutput.additionalContext));
+    let alt = null;
+    for (let i = 0; i < 8; i++) alt = hook('post-tool', { session_id: 'au', cwd, tool_name: 'Bash', tool_input: { command: 'npx vercel deploy --prod' } });
+    assert(alt.hookSpecificOutput && /<laya-auto>/.test(alt.hookSpecificOutput.additionalContext) && /deploy-to-vercel/.test(alt.hookSpecificOutput.additionalContext) && /Skill tool/.test(alt.hookSpecificOutput.additionalContext), JSON.stringify(alt));
+    hook('stop', { session_id: 'au', cwd });
+    state.set({ auto: false });
+    assert(!/<laya-toolbox>/.test(hook('session-start', { session_id: 'au2', cwd }).hookSpecificOutput.additionalContext));
+    // Claude Code's own auto / bypass mode turns auto-laya on for that session: the map arrives once, with the first plan
+    const m1 = hook('prompt', { session_id: 'au3', cwd, permission_mode: 'auto', prompt: 'deploy this next.js app live on vercel today' });
+    const m2 = hook('prompt', { session_id: 'au3', cwd, permission_mode: 'auto', prompt: 'audit this pull request for security vulnerabilities and leaked secrets' });
+    assert(/<laya-toolbox>/.test(m1.hookSpecificOutput.additionalContext) && !/<laya-toolbox>/.test(m2.hookSpecificOutput.additionalContext));
+    assert(!/<laya-toolbox>/.test(hook('prompt', { session_id: 'au4', cwd, permission_mode: 'default', prompt: 'deploy this next.js app live on vercel today' }).hookSpecificOutput.additionalContext));
+    ok('auto-laya: toolbox map (also when Claude Code runs in auto/bypass mode), re-plan every 8 tools names skills + MCP prefixes');
+  }
+
+  // ---- a delegate plan is enforced once: answering on the wrong model gets one nudge, Agent(model) is credited
+  {
+    const T = require('../engine/trace');
+    const ex = { skills: [], mcp: [], agents: [], model: { alias: 'opus', effort: 'high', plan: 'delegate' } };
+    const lazy = { text: 'here is the design', calls: [], model: 'claude-haiku-4-5-20251001' };
+    const v1 = T.verify(ex, lazy);
+    assert(v1.unused(false).some((u) => u.kind === 'model') && /Agent tool with model: "opus"/.test(T.nudge(v1.unused(false))));
+    const good = { text: 'done', calls: [{ name: 'Agent', input: { model: 'opus', subagent_type: 'general-purpose' } }], model: 'claude-haiku-4-5-20251001' };
+    const v2 = T.verify(ex, good);
+    assert(!v2.unused(false).length && /opus via Agent/.test(T.summary(v2)), T.summary(v2));
+    assert(!T.verify({ ...ex, model: { ...ex.model, plan: 'direct' } }, lazy).unused(false).length, 'a suggestion is never enforced');
+    ok('model routing: delegate plan enforced once at Stop, Agent(model=...) credited, suggestions never enforced');
+  }
+
+  // ---- decision quality on a real setup (90 skills/MCP/agents): this is the regression gate for ranking changes
+  {
+    const r = spawnSync('node', [path.join(ROOT, 'evals', 'run.js'), '--min-recall', '0.95', '--min-precision', '0.7'], { encoding: 'utf8', env: { ...process.env, LAYA_HOME: path.join(tmp, 'evalhome') } });
+    assert(r.status === 0, r.stdout.slice(-600));
+    ok(`real-world eval: ${r.stdout.trim().split('\n').pop()}`);
   }
 
   // ---- the shipped template + example agree on the required keys

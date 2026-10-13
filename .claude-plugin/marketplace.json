@@ -8,7 +8,7 @@
       "name": "laya",
       "source": "./",
       "description": "Claude's Laya picks the best skills, agents, MCP servers and plugins before every prompt, auto-installs better ones, and learns from failures (laya.md).",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "license": "MIT",
       "keywords": [
         "router",

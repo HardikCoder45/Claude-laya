@@ -41,7 +41,7 @@ async function stack(argv) {
     if (d.avoid.length) L.push(`avoid    ${d.avoid.map((a) => `${a.id}${a.banned ? ' (banned)' : ''} — ${a.reason}`).join(' · ')}`);
   }
   L.push('');
-  L.push(`engine   setup ${su.state}${su.step && su.state === 'running' ? ' (' + su.step + ')' : ''} · daemon ${pg && pg.ok ? `${pg.warm} on ${pg.device}` : 'off (lexical fallback)'} · mode ${st.mode} · verbose ${st.verbose} · auto-laya ${st.auto ? 'on' : 'off'} · install ${st.install_policy}`);
+  L.push(`engine   setup ${su.state}${su.step && su.state === 'running' ? ' (' + su.step + ')' : ''} · daemon ${pg && pg.ok ? `${pg.warm} on ${pg.device}` : 'off (lexical fallback)'} · mode ${st.mode} · verbose ${st.verbose} · auto-laya ${st.auto ? 'on' : st.auto_follows_mode !== false ? 'on in auto/bypass mode' : 'off'} · install ${st.install_policy}`);
   const reg = readJson(P.registry, null);
   if (reg) { const c = {}; for (const i of reg.items) c[`${i.kind}${i.installed ? '' : '*'}`] = (c[`${i.kind}${i.installed ? '' : '*'}`] || 0) + 1; L.push(`registry ${reg.count} items · ${Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · ')}  (* = not installed)`); }
   print(L.join('\n'));
@@ -155,7 +155,7 @@ const COMMANDS = {
     if (sub === 'policy' && ['save', 'balanced', 'quality'].includes(v)) { state.set({ model_policy: v }); return print(`model policy → ${v}`); }
     if (sub === 'apply' && ['hint', 'auto', 'delegate'].includes(v)) {
       state.set({ model_apply: v });
-      return print(`model apply → ${v}${v === 'auto' ? ' (Claude will switch model/effort itself where session tools exist)' : v === 'delegate' ? ' (when the pick differs from the running model, the work runs through the Agent tool with model=<pick>)' : ' (Laya suggests /model + /effort)'}`);
+      return print(`model apply → ${v}${v === 'auto' ? ' (a stronger pick runs the work through Agent(model=<pick>); a cheaper pick offloads chunks on bigger tasks; small tasks are answered directly)' : v === 'delegate' ? ' (whenever the pick differs from the running model, the work runs through the Agent tool with model=<pick>)' : ' (Laya only suggests /model + /effort)'}`);
     }
     if (sub === 'force') {
       if (!v || v === 'off') { state.set({ model_force: null }); return print('model force → off (Laya routes by task again)'); }
@@ -203,7 +203,7 @@ const COMMANDS = {
   },
   mode: (a) => { const v = a[0]; if (!['on', 'shadow', 'off'].includes(v)) return print(`mode=${state.get().mode} (on|shadow|off)`); state.set({ mode: v }); print(`laya mode → ${v}`); },
   verbose: (a) => { const v = a[0]; if (!['quiet', 'normal', 'full'].includes(v)) return print(`verbose=${state.get().verbose} (quiet|normal|full)`); state.set({ verbose: v }); print(`laya verbosity → ${v}`); },
-  auto: (a) => { const v = a[0]; if (!['on', 'off'].includes(v)) return print(`auto-laya is ${state.get().auto ? 'on' : 'off'}`); state.set({ auto: v === 'on' }); print(`auto-laya → ${v}. ${v === 'on' ? 'Laya will re-check the stack when tools fail twice and every 12 tool calls.' : ''}`); },
+  auto: (a) => { const v = a[0]; if (!['on', 'off'].includes(v)) return print(`auto-laya is ${state.get().auto ? 'on' : 'off'}`); state.set({ auto: v === 'on' }); print(`auto-laya → ${v}. ${v === 'on' ? 'Each session starts with a map of every installed plugin, MCP server, skill and agent; each prompt also names runners-up; mid-task Laya re-plans every 8 tool calls and after 2 failures.' : `It still switches itself on while Claude Code runs in auto/bypass permission mode${state.get().auto_follows_mode === false ? ' (disabled: auto_follows_mode=false)' : ''}.`}`); },
   policy: (a) => { const v = a[0]; if (!['ask', 'trusted', 'off'].includes(v)) return print(`install policy=${state.get().install_policy} (ask|trusted|off)`); state.set({ install_policy: v }); print(`install policy → ${v}`); },
   refresh: () => { const r = inventory.load(process.cwd(), { force: true }); print(`registry refreshed: ${r.count} items`); },
   scout: async (a) => { const r = await require('./installer').scout(positional(a).join(' ')); print(JSON.stringify(r, null, 2)); },

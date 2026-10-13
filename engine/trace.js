@@ -66,13 +66,18 @@ function verify(expect, turn) {
   if (expect.model) {
     const actual = turn.model ? models.idToAlias(turn.model) || turn.model : null;
     const delegated = calls.some((c) => (c.name === 'Task' || c.name === 'Agent') && String(c.input.model || '').toLowerCase() === expect.model.alias);
-    model = { planned: expect.model.alias, effort: expect.model.effort, actual, delegated, ok: actual == null ? null : actual === expect.model.alias || delegated };
+    const plan = expect.model.plan || 'hint';
+    // delegate/check plans promised the work would run on the planned model; the others only suggest a switch
+    const must = plan === 'delegate' || (plan === 'check' && actual && actual !== expect.model.alias);
+    model = { planned: expect.model.alias, effort: expect.model.effort, plan, actual, delegated, ok: actual == null ? null : actual === expect.model.alias || delegated || !must };
   }
   const usedIds = [...skills.filter((s) => s.state === 'called' || s.state === 'applied').map((s) => s.id), ...mcp.filter((m) => m.calls).map((m) => m.id), ...agents.filter((g) => g.calls).map((g) => g.id)];
   // "ignored" for enforcement: named by the user (or any pick, in enforce=all) and neither used nor consciously skipped
   const unused = (all) => [
     ...skills.filter((s) => (all || s.named) && ['delivered', 'missed'].includes(s.state)).map((s) => ({ kind: 'skill', ...s })),
     ...mcp.filter((m) => (all || m.named) && !m.calls).map((m) => ({ kind: 'mcp', ...m })),
+    // a delegate plan is a promise that the work runs on the planned model
+    ...(model && model.ok === false && model.plan === 'delegate' ? [{ kind: 'model', name: model.planned, ...model }] : []),
   ];
   return { skills, mcp, agents, model, usedIds, unused, ack: a };
 }
@@ -89,7 +94,11 @@ function summary(v) {
   if (v.agents.length) rows.push(['agents', v.agents.map((g) => `${g.name} ${g.calls ? '✔ used' : '✘ not used'}`).join(' · ')]);
   if (v.model) {
     const m = v.model, plan = `${m.planned}${m.effort ? '/' + m.effort : ''}`;
-    rows.push(['model', m.ok === null ? `planned ${plan} (running model unknown)` : m.ok ? `${m.delegated && m.actual !== m.planned ? `${m.planned} via Agent` : `ran ${m.actual}`} ✔ (planned ${plan})` : `ran ${m.actual}, planned ${plan} ✘ → /model ${m.planned}`]);
+    rows.push(['model', m.ok === null ? `planned ${plan} (running model unknown)`
+      : m.delegated && m.actual !== m.planned ? `work ran on ${m.planned} via Agent ✔ (session ${m.actual})`
+      : m.actual === m.planned ? `ran ${m.actual} ✔`
+      : m.ok ? `ran ${m.actual} (laya suggests ${plan}${m.plan === 'direct' ? ', small task answered directly' : ''})`
+      : `ran ${m.actual}, planned ${plan} and not delegated ✘ → /model ${m.planned}`]);
   }
   if (!rows.length) return '';
   if (good) {
@@ -98,7 +107,7 @@ function summary(v) {
     if (v.skills.length) bits.push(`skills ${n(v.skills, (s) => s.state !== 'delivered' && s.state !== 'missed')}`);
     if (v.mcp.length) bits.push(`mcp ${n(v.mcp, (m) => m.calls)}`);
     if (v.agents.length) bits.push(`agents ${n(v.agents, (g) => g.calls)}`);
-    if (v.model) bits.push(`model ${v.model.actual || v.model.planned}`);
+    if (v.model) bits.push(`model ${v.model.delegated && v.model.actual !== v.model.planned ? `${v.model.planned} via Agent` : v.model.actual || v.model.planned}`);
     return `laya ▸ turn ✔ ${bits.join(' · ')}`;
   }
   return `laya ▸ turn check\n${rows.map(([a, b]) => `  ${a.padEnd(8)} ${b}`).join('\n')}`;
@@ -106,7 +115,9 @@ function summary(v) {
 
 // Message sent back to Claude when something the user asked for was ignored
 function nudge(list) {
-  const lines = list.map((u) => u.kind === 'skill'
+  const lines = list.map((u) => u.kind === 'model'
+    ? `model ${u.planned}: this task was routed to ${u.planned} but you answered on ${u.actual}. Call the Agent tool with model: "${u.planned}" and a self-contained prompt for the user's request, then give the user its answer (replacing yours if it differs)`
+    : u.kind === 'skill'
     ? `skill ${u.name}: ${u.inlined ? 'its instructions are already in your context above, follow them' : `load it with the Skill tool (skill "${u.name}")`}`
     : `MCP ${u.name}: call its tools (${u.prefix}*); load them with ToolSearch first if they are not in your tool list`);
   return `laya: this turn was meant to use ${list.map((u) => u.name).join(', ')} but did not. Do it now:\n- ${lines.join('\n- ')}\nIf one genuinely does not apply, say so in a line starting "laya ▸ using: ... skipped: <name> (<reason>)".`;

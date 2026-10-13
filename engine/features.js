@@ -3,8 +3,8 @@
 const { tokenize } = require('./util');
 
 const DOMAINS = {
-  code: { d: 'software engineering, programming, debugging, refactoring, tests, APIs', kw: 'code function bug refactor implement test typescript python javascript api class compile repo cli script library module' },
-  frontend_ui: { d: 'web frontend, UI/UX design, CSS, React, landing pages, dashboards', kw: 'ui ux react css html component page design landing dashboard tailwind frontend layout animation responsive' },
+  code: { d: 'software engineering, programming, debugging, refactoring, tests, APIs', kw: 'code function bug refactor implement test typescript python javascript api class compile repo cli script library module architecture service distributed system backend' },
+  frontend_ui: { d: 'web frontend, UI/UX design, CSS, React, landing pages, dashboards', kw: 'ui ux react css html component page landing dashboard tailwind frontend layout responsive' },
   data_db: { d: 'databases, SQL, analytics, data pipelines, storage', kw: 'sql database postgres query schema migration data analytics supabase table rows etl' },
   devops_infra: { d: 'deployment, CI/CD, cloud, containers, infrastructure, releases', kw: 'deploy docker kubernetes ci pipeline infra vercel aws cloud release workflow github-actions hosting' },
   security: { d: 'security review, vulnerabilities, authentication, secrets, hardening', kw: 'security vulnerability auth secret exploit cve audit harden injection xss permission' },
@@ -18,7 +18,7 @@ const DOMAINS = {
 
 const RX = {
   needs_research: /\b(research|find (the )?best|compare|latest|state of the art|investigate|survey|look ?up|search (for|the web)|alternatives?)\b/i,
-  needs_install: /\b(install|set ?up|add (a |the )?(plugin|skill|mcp|connector|agent)s?|best (skills?|plugins?|agents?|tools?|mcps?)|which (plugin|skill|mcp))\b/i,
+  needs_install: /\b(install (a |an |the |new |more |some )?(plugin|skill|mcp|connector|agent|tool|server)s?|(set ?up|add|get|find) (a |an |the |new |more |some )?(\w+ )?(plugin|skill|mcp|connector|agent|tool|server)s?|best (skills?|plugins?|agents?|tools?|mcps?)|which (plugin|skill|mcp))\b/i,
   multi_file: /\b(refactor|implement|build|create|migrate|across|entire|whole|project|app|feature|plugin|system|architecture|phases?)\b/i,
   sensitive: /\b(prod(uction)?|delete|drop|payments?|credentials?|secrets?|passwords?|force.?push|rm -rf|billing|migrat\w+ (the )?database)\b/i,
   tools: /\b(file|repo|run|test|browser|api|database|deploy|install|search|fetch|scrape)\b/i,
@@ -31,6 +31,7 @@ function heuristic(prompt) {
     const kws = tokenize(v.kw);
     scores[k] = kws.reduce((s, w) => s + (toks.has(w) ? 1 : 0), 0) / Math.sqrt(kws.length);
   }
+  scores.chat *= 0.5; // "hello" in "a pdf that says hello" is not small talk: any real domain word wins
   let domain = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
   domain = domain[1] > 0 ? domain[0] : (prompt.split(/\s+/).length < 8 ? 'chat' : 'code');
   const n = prompt.split(/\s+/).length;

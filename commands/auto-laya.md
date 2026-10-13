@@ -1,5 +1,5 @@
 ---
-description: Turn auto-laya on/off: Laya re-checks the stack mid-task when tools fail or work drifts
+description: Turn auto-laya on/off: toolbox map at session start, runners-up per prompt, re-plans mid-task (also on by itself in auto/bypass permission mode)
 argument-hint: [on|off]
 allowed-tools: Bash(node:*)
 ---

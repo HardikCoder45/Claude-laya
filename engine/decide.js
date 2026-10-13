@@ -16,10 +16,13 @@ const fs = require('fs');
 
 const KINDS = ['skill', 'agent', 'mcp', 'plugin', 'command'];
 const LIMIT = { skill: 3, agent: 2, mcp: 2, plugin: 2, command: 2 };
-const TAU = { lexical: 0.25, laya: 0.35 };
+const TAU = { lexical: Number(process.env.LAYA_TAU_LEX || 0.25), laya: 0.35 };
+const REL = Number(process.env.LAYA_REL || 0.7);
+const REL_GLOBAL = Number(process.env.LAYA_REL_G || 0.45); // a pick must score within reach of the best match for this prompt
 const SELF = /^(skill|agent|command|plugin|mcp):(laya|plugin_laya)(:|$)/i;
 const META = /\b(research|install(ing|ed)?|find|best|top|plugins?|skills?|agents?|mcps?|tools?|connectors?|set ?up|add|use|using|better|great|automatically)\b/gi;
 const FOLLOWUP_MS = 15 * 60 * 1000;
+const SYSTEM_EVENT = /^\s*(<(task-notification|system-reminder|local-command-[\w-]+|command-(name|message|args)|bash-(input|stdout|stderr)|user-prompt-submit-hook|webhook-payload|wake|event|child-session-event|teammate-message)\b|\[SYSTEM NOTIFICATION|Caveat: The messages below)/i;
 
 const clamp = (x) => Math.max(0, Math.min(1, x));
 const jaccard = (a, b) => { const A = new Set(a), B = new Set(b); let i = 0; for (const x of A) if (B.has(x)) i++; return i / (A.size + B.size - i || 1); };
@@ -29,6 +32,7 @@ function gate(prompt, sess, st) {
   const p = prompt.trim();
   if (!p) return 'empty';
   if (p.startsWith('/')) return 'slash-command';
+  if (SYSTEM_EVENT.test(p)) return 'system-event'; // background-task results, command output, reminders: not a new request
   const toks = tokenize(p);
   if (toks.length < 2) return 'trivial';
   const last = sess.lastDecision;
@@ -75,7 +79,7 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   const base = { schema: 'laya.decision/1', id: crypto.randomUUID(), ts: new Date().toISOString(), agent, cwd: cwd || null, session: sessionId || null, prompt_hash: crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 12) };
   if (skip) return { ...base, skipped: skip, engine: { mode: 'skipped' } };
 
-  const reg = inventory.load(cwd);
+  const reg = inventory.load(cwd, { transcript });
   const mem = memory.load(cwd);
   const items = reg.items;
   const idx = lexical.index(items);
@@ -127,15 +131,28 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   }
 
   // overlapping items (same description under different names, e.g. mirrored skills) collapse to the best one
+  // relative floors: near the best of its own kind (an MCP server complements a skill, it does not compete with it)
+  // and not hopelessly far below the best match overall
+  const live = scored.filter((s) => !s.banned && s.it.installed && s.kind !== 'plugin');
+  const best = Math.max(0, ...live.map((s) => s.score));
+  const bestOf = (k) => Math.max(0, ...live.filter((s) => s.kind === k).map((s) => s.score));
+  const floorOf = (k) => Math.max(tau, bestOf(k) * REL, best * REL_GLOBAL);
   const pick = (kind, installed) => {
     const seenDesc = new Set();
-    return scored.filter((s) => s.kind === kind && !s.banned && s.it.installed === installed && (s.pinned || s.score >= tau))
+    return scored.filter((s) => s.kind === kind && !s.banned && s.it.installed === installed && (s.pinned || s.score >= (installed ? floorOf(kind) : tau)))
       .sort((a, b) => b.score - a.score)
-      .filter((s) => { const k = s.it.desc.slice(0, 80).toLowerCase(); if (k.length > 30 && seenDesc.has(k)) return false; seenDesc.add(k); return true; })
+      .filter((s) => { // mirrors and regional twins (amplitude / amplitude-eu) say the same thing: keep the best one
+        const t = new Set(tokenize(s.it.desc).slice(0, 40));
+        if (t.size >= 4 && [...seenDesc].some((o) => jaccard([...t], [...o]) >= 0.7)) return false;
+        seenDesc.add(t); return true;
+      })
       .slice(0, kind === 'skill' ? Math.max(1, Math.min(8, st.max_skills || LIMIT.skill)) : LIMIT[kind]);
   };
   const row = (s) => ({ id: s.it.id, name: s.it.name, score: +s.score.toFixed(3), lex: +s.lex.toFixed(3), laya_p: s.p != null ? +s.p.toFixed(3) : null, emb: s.emb != null ? +s.emb.toFixed(3) : null, tok: s.it.tok, installed: s.it.installed, pinned: !!s.pinned });
-  const picks = { skills: pick('skill', true).map(row), agents: pick('agent', true).map(row), mcp: pick('mcp', true).map(row), plugins: pick('plugin', true).map(row), commands: pick('command', true).map(row) };
+  const picks = { skills: pick('skill', true).map(row), agents: pick('agent', true).map(row), mcp: pick('mcp', true).map(row), plugins: [], commands: pick('command', true).map(row) };
+  // a plugin is only worth naming when none of its own skills/servers/agents already made the list
+  const chosen = new Set([...picks.skills, ...picks.agents, ...picks.mcp, ...picks.commands].map((p) => p.id));
+  picks.plugins = pick('plugin', true).filter((s) => !(s.it.components || []).some((c) => chosen.has(c)) && !(s.it.components || []).length).map(row);
 
   // skills the user named outright ("use the pdf skill") are always selected, ahead of any ranking
   const named = loadout.mentioned(prompt, items).filter((it) => !memory.adjust(mem, it.id).banned);
@@ -166,7 +183,10 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   // model aliases (opus/sonnet/haiku) and the hard exclusive hook only exist in Claude Code
   const native = agents.native(agent);
   const model = !native ? null : models.choose({ difficulty: f.difficulty, sensitive: f.flags.sensitive, multi_file: f.flags.multi_file, domain: f.domain }, { policy: st.model_policy, mem, force: st.model_force });
-  const current = st.current_model || models.detectCurrent(transcript) || models.idToAlias(sess.model) || null;
+  // what this session really runs: pinned by the user > transcript (model attachment / last reply) > hook input > settings
+  const current = st.current_model || models.detectCurrent(transcript) || models.idToAlias(sess.model) || models.configured(cwd) || null;
+  const dir = model ? models.direction(model.alias, current) : null;
+  const applyAs = model ? models.applyPlan(st.model_apply, dir, f.difficulty, model.alias) : null;
   const lo = { exclusive: !native && st.exclusive === 'hard' ? 'soft' : st.exclusive, ack: st.ack !== false, inline_on: st.skills_inline, ...loadout.plan(picks.skills, items, { inline: st.skills_inline, budget: st.skill_budget }) };
   lo.inline = lo.inline.map(({ id, name, tok }) => ({ id, name, tok })); // bodies are re-read at injection time, never stored
   const tier = f.difficulty >= 4 || f.flags.sensitive ? { tier: 'deep', effort: 'high' } : f.difficulty <= 1 ? { tier: 'fast', effort: 'low' } : { tier: 'balanced', effort: 'med' };
@@ -176,7 +196,7 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
     ...base,
     engine: { mode, checkpoint: 'english', latency_ms: Date.now() - t0, device: daemon ? daemon.device : null, daemon_ms: daemon ? daemon.ms : null, fallback_reason: mode === 'lexical' ? why : '', registry_items: items.length, min_confidence: tau },
     task: { domain: f.domain, difficulty: f.difficulty, ...f.flags, confidence: f.domain_p, source: f.source, lang: 'en' },
-    picks, swarm, install_queue: queue, avoid, model_hint: tier, model: model ? { ...model, apply: st.model_apply, current, switch: !!(current && current !== model.alias) } : null,
+    picks, swarm, install_queue: queue, avoid, model_hint: tier, model: model ? { ...model, apply: st.model_apply, current, direction: dir, plan: applyAs, weaker: models.registry().filter((x) => x.tier < model.tier).map((x) => x.alias), switch: !!(current && current !== model.alias) } : null,
     loadout: lo,
     history_applied: {
       penalties: scored.filter((s) => s.adj && s.adj.penalty > 0 && picks.skills.concat(picks.agents, picks.mcp).some((p) => p.id === s.it.id)).map((s) => s.it.id),
@@ -191,7 +211,7 @@ async function decide({ prompt, cwd, sessionId, agent = 'claude-code', transcrip
   const inlined = new Set(lo.inline.map((x) => x.id));
   const prefixOf = (p) => (byId.get(p.id) || {}).toolPrefix || `mcp__${String(p.name).replace(/[^\w-]/g, '_')}__`;
   // what the Stop hook will check the finished turn against
-  const expect = { skills: picks.skills.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, inlined: inlined.has(p.id) })), mcp: picks.mcp.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, prefix: prefixOf(p) })), agents: picks.agents.map((p) => ({ id: p.id, name: p.name })), model: model ? { alias: model.alias, effort: model.effort, apply: st.model_apply } : null, ack: lo.ack };
+  const expect = { skills: picks.skills.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, inlined: inlined.has(p.id) })), mcp: picks.mcp.map((p) => ({ id: p.id, name: p.name, named: !!p.mentioned, prefix: prefixOf(p) })), agents: picks.agents.map((p) => ({ id: p.id, name: p.name })), model: model ? { alias: model.alias, effort: model.effort, apply: st.model_apply, plan: applyAs, current } : null, ack: lo.ack };
   state.setSession(sessionId, { lastDecision: { ts: Date.now(), tokens: tokenize(prompt), id: d.id, expect, picks: [...picks.skills, ...picks.agents, ...picks.mcp, ...picks.plugins].map((p) => p.id) }, fails: 0, tools: 0, used: [], failedItems: [], prompt: trunc(redact(prompt), 400) });
   return d;
 }

@@ -87,8 +87,8 @@ function render(d, items) {
   if (skills.length > 1) L.push('They were chosen to work together: apply EVERY one that is relevant, do not stop after the first.');
   if (inl.length) L.push(`Instructions for ${inl.map((s) => s.name).join(', ')} are loaded below in <laya-skill>: follow them now${tool ? ', do not call the Skill tool for them again' : ''}.`);
   if (def.length) L.push(tool ? `Load before starting (Skill tool): ${def.map((s) => s.name).join(', ')}.` : `Read these skill files before starting: ${def.map((s) => (byId.get(s.id) || {}).file || s.name).join(', ')}.`);
-  if (lo.ack !== false) L.push(`In your first message this turn write one line: "laya ▸ using: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}" listing the skills you actually apply, and "· skipped: <skill> (<reason>)" for any you leave out.`);
-  if (lo.exclusive !== 'off') L.push('If you delegate to a subagent, hand it these skill instructions (or tell it to load the same skills) and keep the same restriction.');
+  if (lo.ack !== false) L.push(`Start your reply with one line "laya ▸ using: ${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}" naming the skills you apply, plus "· skipped: <skill> (<reason>)" for any you leave out.`);
+  if (lo.exclusive !== 'off') L.push('Subagents you start get these skill instructions and the same restriction.');
   const blocks = inl.map((s) => {
     const it = byId.get(s.id), b = it && body(it.file);
     if (!b) return '';

@@ -6,10 +6,11 @@ const DEFAULTS = {
   mode: 'on',            // on | shadow (show picks, inject nothing) | off
   verbose: 'normal',     // quiet | normal | full
   auto: false,           // /laya:auto-laya
+  auto_follows_mode: true, // auto-laya switches itself on while Claude Code runs unattended (auto / bypassPermissions / dontAsk mode)
   install_policy: 'trusted', // ask (always confirm) | trusted (auto for official sources) | off
   trusted_sources: ['claude-plugins-official', 'anthropic-agent-skills', 'modelcontextprotocol', 'vercel-labs', 'anthropics'],
   model_policy: 'balanced', // save | balanced | quality: how aggressively to trade capability for tokens
-  model_apply: 'hint',      // hint (suggest /model) | auto (Claude switches itself where it can) | delegate (work runs via Agent model=<alias>)
+  model_apply: 'auto',      // auto (stronger pick: work runs in Agent model=<alias>; cheaper pick: offload chunks) | delegate (always via Agent when it differs) | hint (only suggest /model)
   model_force: null,        // alias to always use, whatever the task (/laya:models force <alias>)
   current_model: null,      // manual override; normally detected from the session transcript
   exclusive: 'soft',        // off | soft (tell Claude to use ONLY the selected skills) | hard (also block other Skill calls)

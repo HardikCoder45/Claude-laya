@@ -14,13 +14,13 @@ const models = require('./models');
 const { decide } = require('./decide');
 const { P, log, redact, trunc, appendLine, tokenize, sha } = require('./util');
 
-const standing = (agent) => `laya is active: it picks skills/agents/MCP per prompt and learns from failures in ~/.laya/laya.md. If a skill, plugin, MCP server or agent fails or misbehaves, record it with \`${agents.native(agent) ? 'laya-conductor' : P.launcher} learn --item <kind:name> --outcome fail --note "<why>"\`.${agents.native(agent) ? '' : ' Laya MCP tools (laya_decide, laya_learn) are available if this agent has the laya server connected.'}`;
+const standing = (agent) => `laya is active: it picks skills/agents/MCP per prompt and learns from failures in ~/.laya/laya.md. If a skill, plugin, MCP server or agent fails or misbehaves, record it with \`${P.launcher} learn --item <kind:name> --outcome fail --note "<why>"\`.${agents.native(agent) ? '' : ' Laya MCP tools (laya_decide, laya_learn) are available if this agent has the laya server connected.'}`;
 
 async function sessionStart(inp) {
   const st = state.get();
   const bg = setup.ensureBackground();
   try { require('./adapters').shim({ onlyIfStale: true }); } catch (e) { log(`shim refresh: ${e.message}`); }
-  const reg = inventory.load(inp.cwd, { force: false });
+  const reg = inventory.load(inp.cwd, { transcript: inp.transcript_path });
   const live = inp.model && (inp.model.id || inp.model);
   if (live && typeof live === 'string') state.setSession(inp.session_id, { model: live });
   let msg = '';
@@ -29,12 +29,20 @@ async function sessionStart(inp) {
   else if (bg.action === 'setup-failed') msg = `laya ▸ setup failed: ${bg.error || 'see ~/.laya/laya.log'} — run /laya:doctor`;
   else if (bg.action === 'daemon-start') msg = `laya ▸ warming Laya · ${reg.count} items indexed`;
   else if (st.verbose !== 'quiet') msg = `laya ▸ ready · ${reg.count} items indexed · mode ${st.mode}${st.auto ? ' · auto-laya on' : ''}`;
-  const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: standing(inp.agent) } };
+  const ctx = st.auto ? `${standing(inp.agent)}\n${emit.capabilityMap(reg.items)}` : standing(inp.agent);
+  if (st.auto) state.setSession(inp.session_id, { mapSent: true });
+  const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx } };
   if (msg) out.systemMessage = msg;
   return out;
 }
 
 const CONFIRM_TTL = 5 * 60 * 1000;
+const AUTO_EVERY = 8;
+const UNATTENDED = new Set(['auto', 'bypassPermissions', 'dontAsk']);
+// auto-laya is on when the user turned it on, or (by default) while Claude Code works unattended
+const autoOn = (st, inp) => !!st.auto || (st.auto_follows_mode !== false && UNATTENDED.has(inp.permission_mode));
+// what the agent is doing right now, in words: the tool and the salient bits of its input (file names, queries, commands)
+const recentWork = (inp) => `${String(inp.tool_name || '').replace(/^mcp__|__/g, ' ')} ${JSON.stringify(inp.tool_input || {}).replace(/[{}"\[\]]/g, ' ').slice(0, 300)}`;
 
 async function userPrompt(inp) {
   const st = state.get(), sid = inp.session_id, prompt = inp.prompt || '';
@@ -43,6 +51,7 @@ async function userPrompt(inp) {
   const held = sess.pending && sess.pending.hash === sha(prompt, 12) && Date.now() - sess.pending.ts < CONFIRM_TTL ? sess.pending.decision : null;
   if (sess.pending) state.setSession(sid, { pending: null, ...(held ? { lastDecision: sess.pending.last } : {}) });
   const d = held || await decide({ prompt, cwd: inp.cwd, sessionId: sid, agent: inp.agent || 'claude-code', transcript: inp.transcript_path });
+  if (d.skipped === 'system-event') return {}; // a background agent finishing etc.: the turn it belongs to keeps its plan
   const out = {};
   const live = !d.skipped && st.mode === 'on';
 
@@ -61,7 +70,13 @@ async function userPrompt(inp) {
 
   const msg = emit.message(d, st);
   if (msg) out.systemMessage = held ? msg.replace('plan ·', 'confirmed ·') : msg;
-  if (live) out.hookSpecificOutput = { hookEventName: 'UserPromptSubmit', additionalContext: emit.context(d, st) };
+  const auto = autoOn(st, inp);
+  if (live) {
+    let ctx = emit.context(d, { ...st, auto });
+    // unattended sessions get the toolbox map once, with the first plan (SessionStart cannot see the permission mode)
+    if (auto && !state.getSession(sid).mapSent) { ctx = `${emit.capabilityMap(inventory.load(inp.cwd).items)}\n${ctx}`; state.setSession(sid, { mapSent: true }); }
+    out.hookSpecificOutput = { hookEventName: 'UserPromptSubmit', additionalContext: ctx };
+  }
   return out;
 }
 
@@ -100,8 +115,8 @@ async function postTool(inp) {
   state.setSession(sid, { used, tools, fails: 0 });
   const st = state.get();
   // auto-laya: periodically re-check whether a better stack exists for what we are actually doing now
-  if (st.auto && tools % 12 === 0 && s.prompt) {
-    const alt = await redecide(inp.cwd, s, `${s.prompt} ${inp.tool_name}`);
+  if (autoOn(st, inp) && tools % AUTO_EVERY === 0 && s.prompt) {
+    const alt = await redecide(inp.cwd, s, `${s.prompt} ${recentWork(inp)}`);
     if (alt) return alt;
   }
   return {};
@@ -112,14 +127,14 @@ async function redecide(cwd, sess, query, exclude = []) {
   const mem = memory.load(cwd);
   const idx = lexical.index(reg.items);
   const have = new Set(sess.lastDecision ? sess.lastDecision.picks : []);
-  const found = lexical.rank(idx, query, { filter: (i) => ['skill', 'agent', 'mcp', 'plugin'].includes(i.kind) && !exclude.includes(i.id) && !memory.adjust(mem, i.id).banned, limit: 6 })
-    .filter((r) => r.score >= 0.3 && !have.has(r.item.id)).slice(0, 3);
+  const found = lexical.rank(idx, query, { filter: (i) => ['skill', 'agent', 'mcp', 'plugin'].includes(i.kind) && !exclude.includes(i.id) && !memory.adjust(mem, i.id).banned && !/(^|[:_-])laya([:_-]|$)/i.test(i.id), limit: 8 })
+    .filter((r) => r.score >= 0.3 && !have.has(r.item.id)).slice(0, 4);
   if (!found.length) return null;
-  const inst = found.filter((r) => r.item.installed), miss = found.filter((r) => !r.item.installed);
+  const inst = found.filter((r) => r.item.installed).map((r) => r.item), miss = found.filter((r) => !r.item.installed).map((r) => r.item);
   const parts = [];
-  if (inst.length) parts.push(`consider (installed): ${inst.map((r) => r.item.name).join(', ')}`);
-  if (miss.length) parts.push(`not installed: ${miss.map((r) => r.item.install || r.item.name).join(', ')} → /laya:install`);
-  return { systemMessage: `laya ▸ auto: ${parts.join(' │ ')}`, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: `<laya-auto>${parts.join('; ')}</laya-auto>` } };
+  if (inst.length) parts.push(`use now (installed): ${emit.useLines(inst).join(' | ')}`);
+  if (miss.length) parts.push(`not installed: ${miss.map((i) => i.install || i.name).join(', ')} → offer /laya:install`);
+  return { systemMessage: `laya ▸ auto: ${[...inst.map((i) => i.name), ...miss.map((i) => (i.install || i.name) + ' (not installed)')].join(', ')}`, hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: `<laya-auto> the work has moved on; laya re-planned from what you are doing now. ${parts.join('. ')}.</laya-auto>` } };
 }
 
 async function toolFailure(inp) {
@@ -137,7 +152,7 @@ async function toolFailure(inp) {
     memory.record(id, 'fail', trunc(redact(err.replace(/\s+/g, ' ')), 140), { cwd: inp.cwd });
     if (st.verbose !== 'quiet') out.systemMessage = `laya ▸ recorded failure: ${id} → laya.md`;
   }
-  if (st.auto && fails >= 2) {
+  if (autoOn(st, inp) && fails >= 2) {
     const alt = await redecide(inp.cwd, { ...s, id: sid }, `${s.prompt || ''} ${inp.tool_name} ${err}`, failedItems);
     if (alt) return { systemMessage: [out.systemMessage, alt.systemMessage].filter(Boolean).join('\n'), hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: alt.hookSpecificOutput.additionalContext } };
   }
@@ -184,6 +199,7 @@ async function run(event, agent) {
   try {
     let inp = {};
     try { inp = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* empty stdin */ }
+    if (process.env.LAYA_DEBUG_HOOKS === '1') appendLine(`${P.home}/hook-io.jsonl`, JSON.stringify({ event, in: inp }));
     if (!agent && agents.canon(inp.agent)) ag = agents.canon(inp.agent);
     inp = agents.normalize(ag, inp);
     inp.agent = ag;
@@ -191,6 +207,7 @@ async function run(event, agent) {
   } catch (e) { log(`hook ${event} error: ${e.stack || e.message}`); out = {}; }
   let shaped = {};
   try { shaped = agents.render(ag, event, out) || {}; } catch (e) { log(`render ${ag}: ${e.message}`); }
+  if (process.env.LAYA_DEBUG_HOOKS === '1') try { appendLine(`${P.home}/hook-io.jsonl`, JSON.stringify({ event, out: shaped })); } catch { /* debug only */ }
   process.stdout.write(JSON.stringify(shaped));
 }
 

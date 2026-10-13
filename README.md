@@ -36,9 +36,10 @@ Until that finishes Laya runs in **lexical mode** (BM25) so nothing ever blocks.
 Before the model sees your prompt, Laya prints the plan: the model + effort, every selected skill (★ = you named it, with how it will be loaded), agents, MCP servers, what to avoid, what to install, engine + latency:
 
 ```
-laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
-  model    sonnet/high (−50% tokens) · now opus → switch with /model sonnet + /effort high
-  skills   ✔ frontend-design (0.63, 1.2k tok loaded) · ✔ webapp-testing (0.42, 0.9k tok loaded)
+laya ▸ plan · code·d4 │ laya·mps 210ms
+  model    opus/xhigh · session on haiku → main work runs on opus via Agent(model=opus) · /model opus + /effort xhigh to switch the whole session
+  skills   ✔ marketing:campaign-plan (0.48, Skill tool loads it) · ✔ marketing:email-sequence (0.52, Skill tool loads it)
+  mcp      ★ forecast (you named it) → tools loaded via ToolSearch
   rule     Claude is told to use ONLY these skills
 ```
 
@@ -50,7 +51,7 @@ laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
 |---|---|
 | `/install <task>` (`/laya:install`) | scout → vet → install the best skills/agents/plugins/MCP for a task |
 | `/stack` (`/laya:stack`) | the stack Laya picked + engine state |
-| `/auto-laya on\|off` | mid-task re-checks: tools failing twice, every 12 tool calls |
+| `/auto-laya on\|off` | toolbox map at session start, runners-up per prompt, re-plans every 8 tool calls and after 2 failures. Also switches itself on while Claude Code runs in auto/bypass permission mode |
 | `/laya:status` · `doctor` · `explain` · `ledger` | health, diagnostics, why-this-pick, laya.md summary |
 | `/laya:learn` · `pin` · `ban` | teach laya.md by hand |
 | `/laya:mode on\|shadow\|off` | shadow = show picks, inject nothing (calibrate first) |
@@ -66,8 +67,9 @@ laya ▸ plan · frontend_ui·d3 │ laya·mps 210ms
 ## How a decision is made
 
 ```
-prompt ─▶ gate (skip slash-commands, trivial, follow-ups)
-       ─▶ registry (skills, agents, commands, MCP, plugins; installed + marketplaces + official catalog)
+prompt ─▶ gate (skip slash-commands, trivial, follow-ups, background-task notifications)
+       ─▶ registry (skills, agents, commands, MCP, plugins; installed + marketplaces + official catalog;
+                    exact names from the session transcript's skill/agent/MCP listings)
        ─▶ hybrid shortlist: BM25  ∪  Laya-encoder embeddings (≤9 per kind)
        ─▶ Laya, one forward pass: domain · difficulty · needs_install/research · sensitive · pick_skill/agent/mcp/plugin
        ─▶ blend: 0.3·lexical + 0.2·embedding + 0.5·Laya  (Laya says "none fits" ⇒ lexical evidence only)
@@ -85,15 +87,17 @@ Laya answers in ~0.6 s warm (Apple GPU), 10 options per question because the che
 
 Each decision picks the **cheapest model that is capable enough** from `~/.laya/models.json` (defaults: haiku, sonnet, opus, fable) and an effort level. Tiers and costs are **relative guesses, not prices**: edit the file to match your plan. A model with failures in laya.md (`model:<alias>`) is skipped; `pin model:<alias>` in laya.md or `/laya:models force <alias>` overrides the routing.
 
-Laya reads the model your session is actually running (last assistant turn in the transcript, or SessionStart), so it only speaks up when the pick differs. A hook cannot switch the live model, so there are three ways to *apply* the pick (`/laya:models apply …`):
+Laya reads the model your session is actually running (Claude Code's per-prompt model record or the last reply in the transcript), so it only acts when the pick differs.
+
+**What can actually change the model** (tested live on Claude Code 2.1): a hook cannot switch the session model, and a skill's `model:` frontmatter changes what the transcript *says* but not the model that answers. An **Agent tool call with `model: "<alias>"` does run on that model**. So that is how Laya applies its pick (`/laya:models apply …`):
 
 | apply | what happens |
 |---|---|
-| `hint` (default) | shows `switch with /model sonnet + /effort high`; you decide |
-| `auto` | Claude switches itself when session tools (`set_session_model`) exist, otherwise suggests `/model` |
-| `delegate` | when the pick differs from the running model, Claude runs the substantive work through the Agent tool with `model=<pick>` and relays the result. Works in every client. |
+| `auto` (default) | pick is **stronger** than the session model → Claude's first action is `Agent(model=<pick>)` for the substantive work, then it checks and relays the result. Pick is **cheaper** and the task is big → self-contained chunks (search, reading, boilerplate) go to `Agent(model=<pick>)`. Small task → answered directly (a subagent would cost more). First prompt of a session (model not known yet) → Claude compares the pick with its own identity and delegates if it is weaker. |
+| `delegate` | whenever the pick differs and the task is not trivial, the work runs through `Agent(model=<pick>)` |
+| `hint` | only shows `switch with /model sonnet + /effort high` |
 
-Independent of `apply`, Claude is told to send trivial subtasks to the cheapest model and hard reviews to the strongest via the Agent tool's `model` param.
+A promised delegation is checked at Stop: if Claude answered on the wrong model instead, it is asked once to run the task through `Agent(model=<pick>)`. `/model <pick>` still switches the whole session if you prefer.
 
 ## Skill loadout
 
@@ -109,7 +113,15 @@ Changes take effect from the next turn.
 
 ## MCP servers
 
-Laya reads MCP servers from `.mcp.json`, user and per-project entries in `~/.claude.json` (also under `CLAUDE_CONFIG_DIR`), plugins (`.mcp.json` and inline in `plugin.json`), and any `mcp__<server>__<tool>` it finds in your recent transcripts (that is how claude.ai connectors such as Gmail or Calendar show up). Servers are matched on their name, well-known keywords (`supabase` → database, sql, migration; `playwright` → browser, screenshot, e2e) and the tool names Laya has seen. Name one in your prompt ("use supabase", "from github", "playwright mcp") and it is always selected. Claude is told the tool prefix and to load the tools with `ToolSearch` if they are not in its list yet.
+Laya reads MCP servers from Claude Code's own listing in the session transcript (every MCP tool name and each server's instructions), `.mcp.json`, user and per-project entries in `~/.claude.json` (also under `CLAUDE_CONFIG_DIR`), plugins (`.mcp.json` and inline in `plugin.json`), and any `mcp__<server>__<tool>` it finds in your recent transcripts (that is how claude.ai connectors such as Gmail or Calendar show up). Servers are matched on their name, well-known keywords (`supabase` → database, sql, migration; `playwright` → browser, screenshot, e2e) and the tool names Laya has seen. Name one in your prompt ("use supabase", "from github", "playwright mcp") and it is always selected. Claude is told the tool prefix and to load the tools with `ToolSearch` if they are not in its list yet.
+
+## Exact names, whatever the folder layout
+
+Claude Code calls a skill by its folder name, namespaced by plugin (`marketing:seo-audit`), and synced skills get their own namespace (`anthropic-skills:pdf`). Laya reads the exact skill, agent and MCP tool names from the session transcript's listings, so what it selects is always something the Skill/Agent tools accept. It also walks nested layouts (`~/.claude/skills/synced/<bucket>/<skill>/`, plugin folders under `~/.claude/plugins/**`) and skips Claude's catch-all built-in agents.
+
+## Decision quality
+
+`node evals/run.js` replays 50 realistic prompts against a real setup (`evals/inventory.realworld.json`: ~60 skills, 4 plugins, 19 MCP servers) and reports recall and precision. On the lexical floor it is at **98% recall / ~75% precision** (it was 98% / 45% before: every prompt carried 2-4 unrelated picks). What changed: query words no item mentions now count against a match, picks must score near the best match of their kind, negated description text ("Do NOT use for PDFs") is ignored, a skill's own name in the prompt is strong evidence, one shared word alone is discounted, regional twins collapse, and a plugin is only named when none of its own skills/servers made the list. The self-check fails if recall drops under 95% or precision under 70%.
 
 ## Did it actually happen?
 
